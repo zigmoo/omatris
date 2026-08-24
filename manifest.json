@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "com.80kv.omatris",
+  "name": "Omatris",
+  "version": "0.1.0",
+  "author": "Akira Perez Quinto",
+  "description": "A modern, theme-aware falling-block game with Classic, Endless, and Practice modes.",
+  "kinds": [
+    "bar-widget",
+    "panel"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "barWidget": "BarWidget.qml",
+    "panel": "Omatris.qml"
+  },
+  "barWidget": {
+    "displayName": "Omatris",
+    "description": "Open the Omatris game window",
+    "category": "Fun",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
