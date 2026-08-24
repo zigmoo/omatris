@@ -21,6 +21,10 @@ closed, hidden, or moved away.
 Every menu can be operated without a mouse: use the arrow keys to move the
 highlight and `Enter` or `Space` to activate it.
 
+Omatris is a single-session plugin. Opening it from the bar, a shell hotkey, or
+`omarchy-shell shell summon` reuses the same loaded panel; a repeated summon
+will not create another window or reset an active game or overlay.
+
 ## Test locally
 
 Run the automated manifest and game-engine checks:

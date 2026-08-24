@@ -44,6 +44,15 @@ Item {
   readonly property color blockInterior: "#08090b"
 
   function open(payloadJson) {
+    // Omarchy already owns one panel object per plugin ID. Treat a repeated
+    // summon as a request for that active session instead of resetting it.
+    // This keeps bar, hotkey, and CLI launches safe without privileging one
+    // launch origin that the host does not otherwise need to expose.
+    if (window.visible || overlayActive) {
+      if (window.visible) Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+      return
+    }
+
     closingFromHost = false
     overlayActive = false
     overlayTarget = null
