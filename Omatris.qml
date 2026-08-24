@@ -43,6 +43,10 @@ Item {
   property bool hotkeyBusy: false
   property bool hotkeyError: false
   property bool hotkeyCaptureRequested: false
+  readonly property int minimumUsableWidth: 600
+  readonly property int minimumUsableHeight: 440
+  readonly property bool windowTooSmall: window.visible
+      && (window.width < minimumUsableWidth || window.height < minimumUsableHeight)
 
   onSettingsFocusChanged: {
     if ((capturingGlobalHotkey || hotkeyCaptureRequested)
@@ -51,6 +55,15 @@ Item {
     else if (!capturingGlobalHotkey
              && settingsFocus !== SettingsNavigation.hotkeyFocus(controlDefinitions().length))
       hotkeyError = false
+  }
+
+  onWindowTooSmallChanged: {
+    if (windowTooSmall) {
+      resetHeldInputs()
+      stopGlobalHotkeyCapture("")
+    } else if (window.visible) {
+      Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    }
   }
 
   Settings {
@@ -122,7 +135,7 @@ Item {
     effectsVolume: audioSettings.effectsVolume
     muted: audioSettings.muted
     active: window.visible || root.overlayActive
-    gamePaused: root.game ? root.game.paused : false
+    gamePaused: root.game ? root.game.paused || root.windowTooSmall : false
   }
 
   readonly property var overlayScreen: screenForMonitor(overlayTarget ? overlayTarget.monitor : null)
@@ -714,6 +727,11 @@ Item {
     return "PRACTICE"
   }
 
+  function scaleToFit(availableWidth, availableHeight, contentWidth, contentHeight) {
+    if (availableWidth <= 0 || availableHeight <= 0 || contentWidth <= 0 || contentHeight <= 0) return 1
+    return Math.max(0.1, Math.min(1, availableWidth / contentWidth, availableHeight / contentHeight))
+  }
+
   function activateMenuSelection() {
     var modes = ["classic", "endless", "practice", "overlay", "settings"]
     var mode = modes[Math.max(0, Math.min(menuIndex, modes.length - 1))]
@@ -774,6 +792,11 @@ Item {
   }
 
   function handleGameKeyPressed(event, fromOverlay) {
+    if (windowTooSmall && !fromOverlay) {
+      event.accepted = true
+      return
+    }
+
     if (view === "settings" && capturingGlobalHotkey) {
       if (event.isAutoRepeat || isModifierKey(event.key)) {
         event.accepted = true
@@ -967,6 +990,10 @@ Item {
   }
 
   function handleGameKeyReleased(event) {
+    if (windowTooSmall) {
+      event.accepted = true
+      return
+    }
     if (event.isAutoRepeat) return
     if (matchesBinding("left", event.key)) {
       releaseHorizontal(-1)
@@ -993,7 +1020,7 @@ Item {
     color: root.background
     implicitWidth: 1040
     implicitHeight: 780
-    minimumSize: Qt.size(900, 680)
+    minimumSize: Qt.size(root.minimumUsableWidth, root.minimumUsableHeight)
 
     onVisibleChanged: {
       if (!visible) root.stopGlobalHotkeyCapture("")
@@ -1016,7 +1043,7 @@ Item {
 
         Rectangle {
           anchors.fill: parent
-          anchors.margins: Math.max(18, Math.min(38, parent.width * 0.04))
+          anchors.margins: Math.max(12, Math.min(38, parent.width * 0.04, parent.height * 0.04))
           radius: Math.max(0, Style.cornerRadius)
           color: root.surface
           border.width: 1
@@ -1024,14 +1051,15 @@ Item {
 
           Item {
             anchors.fill: parent
-            anchors.margins: 28
+            anchors.margins: Math.max(12, Math.min(28, parent.width * 0.03, parent.height * 0.03))
 
             Column {
               id: menuView
+              property bool carousel: parent.height < 590
               visible: root.view === "menu"
               anchors.centerIn: parent
               width: Math.min(660, parent.width)
-              spacing: 22
+              spacing: carousel ? 16 : 22
 
               Text {
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -1068,6 +1096,7 @@ Item {
                     required property int index
                     required property var modelData
                     property bool selected: index === root.menuIndex
+                    visible: !menuView.carousel || selected
                     width: parent.width
                     height: 72
                     radius: Math.max(0, Style.cornerRadius * 0.65)
@@ -1129,7 +1158,9 @@ Item {
 
               Text {
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: "↑ ↓ choose  ·  Enter select  ·  O overlay"
+                text: menuView.carousel
+                  ? "↑ ↓ cycle modes  ·  Enter select  ·  O overlay"
+                  : "↑ ↓ choose  ·  Enter select  ·  O overlay"
                 color: root.muted
                 font.family: Style.fontFamily
                 font.pixelSize: 12
@@ -1138,9 +1169,11 @@ Item {
 
             Column {
               id: settingsView
+              property real responsiveScale: root.scaleToFit(parent.width, parent.height, 760, implicitHeight)
               visible: root.view === "settings"
               anchors.centerIn: parent
-              width: Math.min(760, parent.width)
+              width: 760
+              scale: responsiveScale
               spacing: 13
 
               Text {
@@ -1392,9 +1425,11 @@ Item {
 
             Column {
               id: overlayPickerView
+              property real responsiveScale: root.scaleToFit(parent.width, parent.height, 720, implicitHeight)
               visible: root.view === "overlayPicker"
               anchors.centerIn: parent
-              width: Math.min(720, parent.width)
+              width: 720
+              scale: responsiveScale
               spacing: 16
 
               Text {
@@ -1538,16 +1573,18 @@ Item {
 
             RowLayout {
               id: gameView
+              property bool narrow: width < 700
+              property bool short: height < 520
               visible: root.view === "game" && root.game !== null
               anchors.fill: parent
-              spacing: 24
+              spacing: narrow ? 12 : 24
 
               ColumnLayout {
-                Layout.minimumWidth: 140
-                Layout.preferredWidth: 150
+                Layout.minimumWidth: gameView.narrow ? 105 : 140
+                Layout.preferredWidth: gameView.narrow ? 115 : 150
                 Layout.maximumWidth: 170
                 Layout.fillHeight: true
-                spacing: 18
+                spacing: gameView.short ? 8 : 18
 
                 Text {
                   text: root.game ? root.modeTitle(root.game.mode) : ""
@@ -1575,7 +1612,7 @@ Item {
                 }
 
                 Text {
-                  text: "ESC modes  ·  R restart"
+                  text: gameView.narrow ? "ESC · R" : "ESC modes  ·  R restart"
                   color: root.muted
                   font.family: Style.fontFamily
                   font.pixelSize: 11
@@ -1583,7 +1620,7 @@ Item {
               }
 
               Item {
-                Layout.minimumWidth: 300
+                Layout.minimumWidth: gameView.narrow ? 160 : 300
                 Layout.preferredWidth: 360
                 Layout.maximumWidth: 440
                 Layout.fillWidth: true
@@ -1726,11 +1763,12 @@ Item {
               }
 
               ColumnLayout {
+                visible: !gameView.narrow
                 Layout.minimumWidth: 150
                 Layout.preferredWidth: 160
                 Layout.maximumWidth: 170
                 Layout.fillHeight: true
-                spacing: 18
+                spacing: gameView.short ? 8 : 18
 
                 PreviewBlock {
                   title: "NEXT"
@@ -1769,6 +1807,7 @@ Item {
                 Item { Layout.fillHeight: true }
 
                 Column {
+                  visible: !gameView.short
                   spacing: 7
                   Text { text: "CONTROLS"; color: root.foreground; font.family: Style.fontFamily; font.pixelSize: 12; font.weight: Font.DemiBold }
                   Text { text: root.bindingSummary("left") + " / " + root.bindingSummary("right") + "  MOVE"; color: root.muted; font.family: Style.fontFamily; font.pixelSize: 10 }
@@ -1795,8 +1834,11 @@ Item {
               border.color: root.outline
 
               Column {
+                id: resultContent
+                property real responsiveScale: root.scaleToFit(parent.width - 24, parent.height - 24, 430, implicitHeight)
                 anchors.centerIn: parent
-                width: Math.min(430, parent.width - 48)
+                width: 430
+                scale: responsiveScale
                 spacing: 20
 
                 Text {
@@ -1866,6 +1908,60 @@ Item {
                 }
               }
             }
+
+            Rectangle {
+              id: tooSmallView
+              visible: root.windowTooSmall
+              anchors.fill: parent
+              z: 100
+              radius: Math.max(0, Style.cornerRadius * 0.65)
+              color: root.surface
+              border.width: 1
+              border.color: root.urgent
+
+              Column {
+                anchors.centerIn: parent
+                width: Math.max(1, Math.min(430, parent.width - 24))
+                spacing: 12
+
+                Text {
+                  width: parent.width
+                  horizontalAlignment: Text.AlignHCenter
+                  wrapMode: Text.WordWrap
+                  text: "WINDOW TOO SMALL"
+                  color: root.urgent
+                  font.family: Style.fontFamily
+                  font.pixelSize: 24
+                  font.weight: Font.DemiBold
+                  font.letterSpacing: 1.5
+                }
+
+                Text {
+                  width: parent.width
+                  horizontalAlignment: Text.AlignHCenter
+                  wrapMode: Text.WordWrap
+                  text: "Resize Omatris to at least " + root.minimumUsableWidth
+                    + " × " + root.minimumUsableHeight + " to continue."
+                  color: root.foreground
+                  font.family: Style.fontFamily
+                  font.pixelSize: 14
+                }
+
+                Text {
+                  width: parent.width
+                  horizontalAlignment: Text.AlignHCenter
+                  text: Math.round(window.width) + " × " + Math.round(window.height) + " right now"
+                  color: root.muted
+                  font.family: Style.fontFamily
+                  font.pixelSize: 12
+                }
+              }
+
+              MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+              }
+            }
           }
         }
       }
@@ -1900,7 +1996,7 @@ Item {
     running: {
       root.revision
       return (window.visible || root.overlayActive) && root.view === "game" && root.game
-          && root.game.status === "playing" && !root.game.paused
+          && root.game.status === "playing" && !root.game.paused && !root.windowTooSmall
           && (root.game.mode !== "practice" || root.game.practiceSpeed > 0)
     }
     repeat: true
@@ -1915,7 +2011,8 @@ Item {
     running: {
       root.revision
       return (window.visible || root.overlayActive) && root.view === "game" && root.game
-          && root.game.status === "playing" && !root.game.paused && root.game.grounded
+          && root.game.status === "playing" && !root.game.paused && !root.windowTooSmall
+          && root.game.grounded
     }
     repeat: true
     onTriggered: {
@@ -1927,7 +2024,8 @@ Item {
   Timer {
     id: rotationRepeat
     onTriggered: {
-      if (!root.game || root.game.status !== "playing" || root.game.paused || root.rotationDirection === 0) {
+      if (!root.game || root.game.status !== "playing" || root.game.paused
+          || root.windowTooSmall || root.rotationDirection === 0) {
         stop()
         return
       }
@@ -1941,7 +2039,8 @@ Item {
   Timer {
     id: horizontalRepeat
     onTriggered: {
-      if (!root.game || root.game.status !== "playing" || root.game.paused || root.horizontalDirection === 0) {
+      if (!root.game || root.game.status !== "playing" || root.game.paused
+          || root.windowTooSmall || root.horizontalDirection === 0) {
         stop()
         return
       }
@@ -1955,7 +2054,8 @@ Item {
   Timer {
     id: softDropRepeat
     onTriggered: {
-      if (!root.game || root.game.status !== "playing" || root.game.paused || !root.downHeld) {
+      if (!root.game || root.game.status !== "playing" || root.game.paused
+          || root.windowTooSmall || !root.downHeld) {
         stop()
         return
       }
