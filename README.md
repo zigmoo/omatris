@@ -4,6 +4,8 @@ A clean, theme-aware falling-block game for the Omarchy Quattro shell. It runs i
 native resizable window, follows the active Omarchy palette and needs no
 external runtime dependencies.
 
+![Omatris gameplay](preview.png)
+
 ## Modes
 
 - **Classic** — clear 40 lines; speed increases every 10 lines.
