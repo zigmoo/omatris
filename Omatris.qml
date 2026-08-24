@@ -1,9 +1,12 @@
 import QtQuick
 import QtQuick.Layouts
+import QtCore
 import Quickshell
 import Quickshell.Hyprland
+import Quickshell.Io
 import qs.Commons
 import "Game.js" as Game
+import "SettingsNavigation.js" as SettingsNavigation
 
 Item {
   id: root
@@ -29,6 +32,98 @@ Item {
   property int overlayPickerIndex: 0
   property int menuIndex: 0
   property int resultIndex: 0
+  property int settingsFocus: 0
+  property string editingVolume: ""
+  property string rebindingAction: ""
+  property int rebindingSlot: 0
+  property string settingsNotice: ""
+  property bool capturingGlobalHotkey: false
+  property string globalHotkey: ""
+  property string hotkeyOperation: ""
+  property bool hotkeyBusy: false
+  property bool hotkeyError: false
+  property bool hotkeyCaptureRequested: false
+
+  onSettingsFocusChanged: {
+    if ((capturingGlobalHotkey || hotkeyCaptureRequested)
+        && settingsFocus !== SettingsNavigation.hotkeyFocus(controlDefinitions().length))
+      stopGlobalHotkeyCapture("Global shortcut unchanged")
+    else if (!capturingGlobalHotkey
+             && settingsFocus !== SettingsNavigation.hotkeyFocus(controlDefinitions().length))
+      hotkeyError = false
+  }
+
+  Settings {
+    id: highScores
+    location: StandardPaths.writableLocation(StandardPaths.GenericConfigLocation) + "/omatris.ini"
+    category: "highScores"
+    property int classic: 0
+    property int endless: 0
+    property int overlay: 0
+  }
+
+  Process {
+    id: hotkeyProcess
+    running: false
+
+    stdout: StdioCollector {
+      id: hotkeyStdout
+      waitForEnd: true
+    }
+    stderr: StdioCollector {
+      id: hotkeyStderr
+      waitForEnd: true
+    }
+    onExited: function(exitCode) {
+      root.handleHotkeyResult(exitCode, hotkeyStdout.text, hotkeyStderr.text)
+    }
+  }
+
+  Settings {
+    id: audioSettings
+    location: StandardPaths.writableLocation(StandardPaths.GenericConfigLocation) + "/omatris.ini"
+    category: "audio"
+    property real musicVolume: 0.35
+    property real effectsVolume: 0.7
+    property bool muted: false
+  }
+
+  Settings {
+    id: controlSettings
+    location: StandardPaths.writableLocation(StandardPaths.GenericConfigLocation) + "/omatris.ini"
+    category: "controls"
+    property int leftPrimary: Qt.Key_Left
+    property int leftSecondary: Qt.Key_A
+    property int rightPrimary: Qt.Key_Right
+    property int rightSecondary: Qt.Key_D
+    property int downPrimary: Qt.Key_Down
+    property int downSecondary: Qt.Key_S
+    property int rotateLeftPrimary: Qt.Key_Z
+    property int rotateLeftSecondary: 0
+    property int rotateRightPrimary: Qt.Key_X
+    property int rotateRightSecondary: Qt.Key_Up
+    property int dropPrimary: Qt.Key_Space
+    property int dropSecondary: 0
+    property int holdPrimary: Qt.Key_C
+    property int holdSecondary: Qt.Key_Shift
+    property int pausePrimary: Qt.Key_P
+    property int pauseSecondary: 0
+    property int restartPrimary: Qt.Key_R
+    property int restartSecondary: 0
+    property int blockStylePrimary: Qt.Key_B
+    property int blockStyleSecondary: 0
+    property int mutePrimary: Qt.Key_M
+    property int muteSecondary: 0
+  }
+
+  AudioController {
+    id: audioController
+    musicVolume: audioSettings.musicVolume
+    effectsVolume: audioSettings.effectsVolume
+    muted: audioSettings.muted
+    active: window.visible || root.overlayActive
+    gamePaused: root.game ? root.game.paused : false
+  }
 
   readonly property var overlayScreen: screenForMonitor(overlayTarget ? overlayTarget.monitor : null)
   property bool overlayTestingNoFocus: false
@@ -75,6 +170,7 @@ Item {
   }
 
   function close() {
+    stopGlobalHotkeyCapture("")
     overlayActive = false
     overlayTarget = null
     overlayTargetAddress = ""
@@ -85,6 +181,7 @@ Item {
   }
 
   function requestClose() {
+    stopGlobalHotkeyCapture("")
     if (overlayActive) {
       stopOverlay("")
       return
@@ -97,6 +194,7 @@ Item {
     var previousPracticeSpeed = game && game.mode === "practice" ? game.practiceSpeed : 1.0
     resetHeldInputs()
     game = Game.newGame(mode)
+    audioController.watchGame(game)
     if (mode === "practice") game.practiceSpeed = previousPracticeSpeed
     resultIndex = 0
     view = "game"
@@ -179,6 +277,7 @@ Item {
 
     resetHeldInputs()
     game = Game.newGame("overlay")
+    audioController.watchGame(game)
     resultIndex = 0
     overlayTarget = toplevel
     overlayTargetAddress = overlayIdentity(toplevel)
@@ -223,7 +322,35 @@ Item {
   }
 
   function refresh() {
+    recordHighScoreIfFinished()
+    audioController.syncGame(game)
     revision += 1
+  }
+
+  function highScoreForMode(mode) {
+    if (mode === "classic") return highScores.classic
+    if (mode === "endless") return highScores.endless
+    if (mode === "overlay") return highScores.overlay
+    return 0
+  }
+
+  function recordHighScoreIfFinished() {
+    if (!game || game.status === "playing" || game.mode === "practice" || game.highScoreRecorded) return
+    var previous = highScoreForMode(game.mode)
+    game.isNewHighScore = game.score > previous
+    if (game.mode === "classic" && game.score > highScores.classic) highScores.classic = game.score
+    else if (game.mode === "endless" && game.score > highScores.endless) highScores.endless = game.score
+    else if (game.mode === "overlay" && game.score > highScores.overlay) highScores.overlay = game.score
+    game.highScoreRecorded = true
+  }
+
+  function finishIfLocalBest() {
+    if (!game || !Game.qualifiesForLocalBest(game, highScoreForMode(game.mode))) return false
+    resetHeldInputs()
+    Game.endRun(game)
+    resultIndex = 0
+    refresh()
+    return true
   }
 
   function toggleBlockStyle() {
@@ -247,6 +374,9 @@ Item {
 
   function returnToMenu() {
     resetHeldInputs()
+    rebindingAction = ""
+    editingVolume = ""
+    stopGlobalHotkeyCapture("")
     view = "menu"
     refresh()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
@@ -341,6 +471,242 @@ Item {
     }
   }
 
+  function controlDefinitions() {
+    return [
+      { action: "left", label: "MOVE LEFT" },
+      { action: "right", label: "MOVE RIGHT" },
+      { action: "down", label: "SOFT DROP" },
+      { action: "rotateLeft", label: "ROTATE LEFT" },
+      { action: "rotateRight", label: "ROTATE RIGHT" },
+      { action: "drop", label: "HARD DROP" },
+      { action: "hold", label: "HOLD" },
+      { action: "pause", label: "PAUSE" },
+      { action: "restart", label: "RESTART" },
+      { action: "blockStyle", label: "BLOCK STYLE" },
+      { action: "mute", label: "MUTE AUDIO" }
+    ]
+  }
+
+  function bindingProperty(action, slot) {
+    return action + (slot === 0 ? "Primary" : "Secondary")
+  }
+
+  function bindingValue(action, slot) {
+    return controlSettings[bindingProperty(action, slot)] || 0
+  }
+
+  function matchesBinding(action, key) {
+    return key === bindingValue(action, 0) || key === bindingValue(action, 1)
+  }
+
+  function setBinding(action, slot, key) {
+    if (key !== 0) {
+      var definitions = controlDefinitions()
+      for (var index = 0; index < definitions.length; index++) {
+        for (var candidateSlot = 0; candidateSlot < 2; candidateSlot++) {
+          if (definitions[index].action === action && candidateSlot === slot) continue
+          var propertyName = bindingProperty(definitions[index].action, candidateSlot)
+          if (controlSettings[propertyName] === key) controlSettings[propertyName] = 0
+        }
+      }
+    }
+    controlSettings[bindingProperty(action, slot)] = key
+    settingsNotice = key === 0 ? "Binding cleared" : actionLabel(action) + " set to " + keyName(key)
+    rebindingAction = ""
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function actionLabel(action) {
+    var definitions = controlDefinitions()
+    for (var index = 0; index < definitions.length; index++)
+      if (definitions[index].action === action) return definitions[index].label
+    return action
+  }
+
+  function bindingSummary(action) {
+    var primary = keyName(bindingValue(action, 0))
+    var secondaryValue = bindingValue(action, 1)
+    return secondaryValue ? primary + " / " + keyName(secondaryValue) : primary
+  }
+
+  function beginRebind(action, slot) {
+    editingVolume = ""
+    stopGlobalHotkeyCapture("")
+    rebindingAction = action
+    rebindingSlot = slot
+    settingsNotice = "Press a key · Esc cancels · Backspace clears"
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function keyName(key) {
+    if (!key) return "—"
+    if (key >= Qt.Key_A && key <= Qt.Key_Z) return String.fromCharCode(key)
+    if (key >= Qt.Key_0 && key <= Qt.Key_9) return String.fromCharCode(key)
+    switch (key) {
+      case Qt.Key_Left: return "LEFT"
+      case Qt.Key_Right: return "RIGHT"
+      case Qt.Key_Up: return "UP"
+      case Qt.Key_Down: return "DOWN"
+      case Qt.Key_Space: return "SPACE"
+      case Qt.Key_Shift: return "SHIFT"
+      case Qt.Key_Control: return "CTRL"
+      case Qt.Key_Alt: return "ALT"
+      case Qt.Key_Tab: return "TAB"
+      case Qt.Key_Return: return "ENTER"
+      case Qt.Key_Enter: return "ENTER"
+      case Qt.Key_Backspace: return "BACKSPACE"
+      case Qt.Key_Delete: return "DELETE"
+      case Qt.Key_Home: return "HOME"
+      case Qt.Key_End: return "END"
+      case Qt.Key_PageUp: return "PAGE UP"
+      case Qt.Key_PageDown: return "PAGE DOWN"
+      default: return "KEY " + key
+    }
+  }
+
+  function resetControlBindings() {
+    controlSettings.leftPrimary = Qt.Key_Left; controlSettings.leftSecondary = Qt.Key_A
+    controlSettings.rightPrimary = Qt.Key_Right; controlSettings.rightSecondary = Qt.Key_D
+    controlSettings.downPrimary = Qt.Key_Down; controlSettings.downSecondary = Qt.Key_S
+    controlSettings.rotateLeftPrimary = Qt.Key_Z; controlSettings.rotateLeftSecondary = 0
+    controlSettings.rotateRightPrimary = Qt.Key_X; controlSettings.rotateRightSecondary = Qt.Key_Up
+    controlSettings.dropPrimary = Qt.Key_Space; controlSettings.dropSecondary = 0
+    controlSettings.holdPrimary = Qt.Key_C; controlSettings.holdSecondary = Qt.Key_Shift
+    controlSettings.pausePrimary = Qt.Key_P; controlSettings.pauseSecondary = 0
+    controlSettings.restartPrimary = Qt.Key_R; controlSettings.restartSecondary = 0
+    controlSettings.blockStylePrimary = Qt.Key_B; controlSettings.blockStyleSecondary = 0
+    controlSettings.mutePrimary = Qt.Key_M; controlSettings.muteSecondary = 0
+    settingsNotice = "Default controls restored"
+    refresh()
+  }
+
+  function setVolume(kind, value) {
+    var normalized = Math.max(0, Math.min(1, Math.round(value * 20) / 20))
+    if (kind === "music") audioSettings.musicVolume = normalized
+    else {
+      audioSettings.effectsVolume = normalized
+      audioController.previewEffect()
+    }
+  }
+
+  function hotkeyHelperPath() {
+    var url = String(Qt.resolvedUrl("scripts/omatris-hotkey"))
+    return decodeURIComponent(url.replace(/^file:\/\//, ""))
+  }
+
+  function runHotkeyOperation(operation, shortcut) {
+    if (hotkeyProcess.running) return
+    hotkeyOperation = operation
+    hotkeyBusy = true
+    hotkeyError = false
+    settingsNotice = operation === "get" ? "Checking global shortcut…"
+      : operation === "capture-on" ? "Preparing protected shortcut capture…"
+      : "Checking Hyprland bindings…"
+    var command = ["bash", hotkeyHelperPath(), operation]
+    if (shortcut) command.push(shortcut)
+    hotkeyProcess.command = command
+    hotkeyProcess.running = true
+  }
+
+  function handleHotkeyResult(exitCode, output, errorOutput) {
+    hotkeyBusy = false
+    var completedOperation = hotkeyOperation
+    var result = null
+    try { result = JSON.parse(String(output || "").trim()) }
+    catch (error) { /* The fallback below reports malformed helper output. */ }
+
+    if (result) {
+      if (result.status === "ok") globalHotkey = result.shortcut || ""
+      hotkeyError = result.status !== "ok"
+      settingsNotice = result.message || (completedOperation === "get"
+        ? (result.shortcut ? "Global shortcut active" : "No global shortcut set")
+        : result.status === "ok" ? "Global shortcut updated" : "Could not update shortcut")
+    } else {
+      hotkeyError = true
+      settingsNotice = String(errorOutput || "").trim() || "Could not update the global shortcut"
+    }
+    capturingGlobalHotkey = completedOperation === "capture-on" && result && result.status === "ok"
+      && hotkeyCaptureRequested && view === "settings" && window.visible
+    if (completedOperation === "capture-on" && !capturingGlobalHotkey)
+      resetHyprlandSubmap()
+    if (completedOperation !== "capture-on" || !capturingGlobalHotkey)
+      hotkeyCaptureRequested = false
+    hotkeyOperation = ""
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function beginGlobalHotkeyCapture() {
+    if (hotkeyBusy) return
+    editingVolume = ""
+    rebindingAction = ""
+    capturingGlobalHotkey = false
+    hotkeyCaptureRequested = true
+    hotkeyError = false
+    runHotkeyOperation("capture-on", "")
+  }
+
+  function resetHyprlandSubmap() {
+    Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.submap(\"reset\")"])
+  }
+
+  function stopGlobalHotkeyCapture(message) {
+    if (capturingGlobalHotkey || hotkeyCaptureRequested) resetHyprlandSubmap()
+    capturingGlobalHotkey = false
+    hotkeyCaptureRequested = false
+    if (message !== undefined && message !== "") settingsNotice = message
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function isModifierKey(key) {
+    return key === Qt.Key_Shift || key === Qt.Key_Control || key === Qt.Key_Alt
+      || key === Qt.Key_Meta || key === Qt.Key_Super_L || key === Qt.Key_Super_R
+  }
+
+  function globalHotkeyKeyName(key) {
+    if (key >= Qt.Key_A && key <= Qt.Key_Z) return String.fromCharCode(key)
+    if (key >= Qt.Key_0 && key <= Qt.Key_9) return String.fromCharCode(key)
+    if (key >= Qt.Key_F1 && key <= Qt.Key_F12) return "F" + (key - Qt.Key_F1 + 1)
+    switch (key) {
+      case Qt.Key_Left: return "LEFT"
+      case Qt.Key_Right: return "RIGHT"
+      case Qt.Key_Up: return "UP"
+      case Qt.Key_Down: return "DOWN"
+      case Qt.Key_Space: return "SPACE"
+      case Qt.Key_Tab: return "TAB"
+      case Qt.Key_Return: return "RETURN"
+      case Qt.Key_Enter: return "ENTER"
+      case Qt.Key_Home: return "HOME"
+      case Qt.Key_End: return "END"
+      case Qt.Key_PageUp: return "PAGEUP"
+      case Qt.Key_PageDown: return "PAGEDOWN"
+      case Qt.Key_Insert: return "INSERT"
+      case Qt.Key_Delete: return "DELETE"
+      default: return ""
+    }
+  }
+
+  function globalHotkeyForEvent(event) {
+    var key = globalHotkeyKeyName(event.key)
+    if (!key) return ""
+    var parts = []
+    if ((event.modifiers & Qt.MetaModifier) !== 0) parts.push("SUPER")
+    if ((event.modifiers & Qt.ControlModifier) !== 0) parts.push("CTRL")
+    if ((event.modifiers & Qt.AltModifier) !== 0) parts.push("ALT")
+    if ((event.modifiers & Qt.ShiftModifier) !== 0) parts.push("SHIFT")
+    if (parts.indexOf("SUPER") < 0 && parts.indexOf("CTRL") < 0 && parts.indexOf("ALT") < 0) return ""
+    parts.push(key)
+    return parts.join(" + ")
+  }
+
+  function currentSettingsTarget() {
+    return SettingsNavigation.targetAt(settingsFocus, controlDefinitions().length)
+  }
+
+  function controlSlotFocused(controlIndex, slot) {
+    var target = currentSettingsTarget()
+    return target.kind === "control" && target.controlIndex === controlIndex && target.slot === slot
+  }
+
   function modeTitle(mode) {
     if (mode === "classic") return "CLASSIC · 40 LINES"
     if (mode === "endless") return "ENDLESS"
@@ -349,9 +715,18 @@ Item {
   }
 
   function activateMenuSelection() {
-    var modes = ["classic", "endless", "practice", "overlay"]
+    var modes = ["classic", "endless", "practice", "overlay", "settings"]
     var mode = modes[Math.max(0, Math.min(menuIndex, modes.length - 1))]
-    if (mode === "overlay") showOverlayPicker()
+    if (mode === "settings") {
+      settingsFocus = 0
+      editingVolume = ""
+      rebindingAction = ""
+      capturingGlobalHotkey = false
+      settingsNotice = ""
+      view = "settings"
+      refresh()
+      runHotkeyOperation("get", "")
+    } else if (mode === "overlay") showOverlayPicker()
     else startGame(mode)
   }
 
@@ -371,6 +746,7 @@ Item {
     if (resultIndex === 0) {
       if (overlayActive) {
         game = Game.newGame("overlay")
+        audioController.watchGame(game)
         resetHeldInputs()
         refresh()
       } else {
@@ -385,20 +761,79 @@ Item {
 
   function perform(action) {
     if (!game) return
-    if (action === "left") Game.move(game, -1, 0)
-    else if (action === "right") Game.move(game, 1, 0)
-    else if (action === "down") Game.move(game, 0, 1)
-    else if (action === "rotateRight") Game.rotate(game, 1)
-    else if (action === "rotateLeft") Game.rotate(game, -1)
-    else if (action === "drop") Game.hardDrop(game)
-    else if (action === "hold") Game.hold(game)
+    var succeeded = false
+    if (action === "left") succeeded = Game.move(game, -1, 0)
+    else if (action === "right") succeeded = Game.move(game, 1, 0)
+    else if (action === "down") succeeded = Game.move(game, 0, 1)
+    else if (action === "rotateRight") succeeded = Game.rotate(game, 1)
+    else if (action === "rotateLeft") succeeded = Game.rotate(game, -1)
+    else if (action === "drop") succeeded = Game.hardDrop(game)
+    else if (action === "hold") succeeded = Game.hold(game)
+    if (succeeded) audioController.playAction(action)
     refresh()
   }
 
   function handleGameKeyPressed(event, fromOverlay) {
+    if (view === "settings" && capturingGlobalHotkey) {
+      if (event.isAutoRepeat || isModifierKey(event.key)) {
+        event.accepted = true
+        return
+      }
+      if (event.key === Qt.Key_Escape) {
+        stopGlobalHotkeyCapture("Global shortcut unchanged")
+      } else if (event.key === Qt.Key_Backspace || event.key === Qt.Key_Delete) {
+        stopGlobalHotkeyCapture("")
+        runHotkeyOperation("clear", "")
+      } else {
+        var shortcut = globalHotkeyForEvent(event)
+        if (shortcut === "") {
+          stopGlobalHotkeyCapture("")
+          hotkeyError = true
+          settingsNotice = "Use Super, Ctrl, or Alt together with one supported key"
+        } else {
+          stopGlobalHotkeyCapture("")
+          runHotkeyOperation("set", shortcut)
+        }
+      }
+      event.accepted = true
+      return
+    }
+
+    if (view === "settings" && rebindingAction !== "") {
+      if (event.isAutoRepeat) { event.accepted = true; return }
+      if (event.key === Qt.Key_Escape) {
+        rebindingAction = ""
+        settingsNotice = "Binding unchanged"
+      } else if (event.key === Qt.Key_Backspace || event.key === Qt.Key_Delete) {
+        setBinding(rebindingAction, rebindingSlot, 0)
+      } else {
+        setBinding(rebindingAction, rebindingSlot, event.key)
+      }
+      event.accepted = true
+      return
+    }
+
+    if (view === "settings" && editingVolume !== "") {
+      if (event.key === Qt.Key_Left || event.key === Qt.Key_Right) {
+        var volumeDirection = event.key === Qt.Key_Left ? -1 : 1
+        var currentVolume = editingVolume === "music" ? audioSettings.musicVolume : audioSettings.effectsVolume
+        setVolume(editingVolume, currentVolume + volumeDirection * 0.05)
+      } else if (!event.isAutoRepeat && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Escape)) {
+        settingsNotice = editingVolume === "music" ? "Music volume set" : "Effects volume set"
+        editingVolume = ""
+      } else {
+        event.accepted = true
+        return
+      }
+      event.accepted = true
+      return
+    }
+
     if (event.key === Qt.Key_Escape) {
-      if (fromOverlay || overlayActive) stopOverlay("")
-      else if (view === "game" || view === "overlayPicker") returnToMenu()
+      if (view === "game" && game && game.status === "playing" && finishIfLocalBest()) {
+        // Keep the completed run visible so the player sees and can act on the local best.
+      } else if (fromOverlay || overlayActive) stopOverlay("")
+      else if (view === "game" || view === "overlayPicker" || view === "settings") returnToMenu()
       else requestClose()
       event.accepted = true
       return
@@ -406,10 +841,10 @@ Item {
 
     if (view === "menu") {
       if (!event.isAutoRepeat && (event.key === Qt.Key_Up || event.key === Qt.Key_Left)) {
-        menuIndex = (menuIndex + 3) % 4
+        menuIndex = (menuIndex + 4) % 5
         event.accepted = true
       } else if (!event.isAutoRepeat && (event.key === Qt.Key_Down || event.key === Qt.Key_Right)) {
-        menuIndex = (menuIndex + 1) % 4
+        menuIndex = (menuIndex + 1) % 5
         event.accepted = true
       } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
         activateMenuSelection()
@@ -418,6 +853,45 @@ Item {
         showOverlayPicker()
         event.accepted = true
       }
+      return
+    }
+
+    if (view === "settings") {
+      var controls = controlDefinitions()
+      if (!event.isAutoRepeat && event.key === Qt.Key_Tab) {
+        settingsFocus = SettingsNavigation.tab(settingsFocus, (event.modifiers & Qt.ShiftModifier) !== 0, controls.length)
+        settingsNotice = ""
+      } else if (event.key === Qt.Key_Left) {
+        settingsFocus = SettingsNavigation.move(settingsFocus, -1, 0, controls.length)
+        settingsNotice = ""
+      } else if (event.key === Qt.Key_Right) {
+        settingsFocus = SettingsNavigation.move(settingsFocus, 1, 0, controls.length)
+        settingsNotice = ""
+      } else if (event.key === Qt.Key_Up) {
+        settingsFocus = SettingsNavigation.move(settingsFocus, 0, -1, controls.length)
+        settingsNotice = ""
+      } else if (event.key === Qt.Key_Down) {
+        settingsFocus = SettingsNavigation.move(settingsFocus, 0, 1, controls.length)
+        settingsNotice = ""
+      } else if (!event.isAutoRepeat && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space)) {
+        var target = currentSettingsTarget()
+        if (target.kind === "volume") {
+          editingVolume = target.id
+          settingsNotice = "Use ← → to adjust · Enter or Esc finishes"
+        } else if (target.kind === "control") {
+          beginRebind(controls[target.controlIndex].action, target.slot)
+        } else if (target.kind === "hotkey") {
+          beginGlobalHotkeyCapture()
+        } else if (target.id === "reset") {
+          resetControlBindings()
+        } else if (target.id === "mute") {
+          audioSettings.muted = !audioSettings.muted
+          settingsNotice = audioSettings.muted ? "Audio muted" : "Audio unmuted"
+        } else if (target.id === "back") {
+          returnToMenu()
+        }
+      } else return
+      event.accepted = true
       return
     }
 
@@ -447,7 +921,7 @@ Item {
         resultIndex = 1
       } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
         activateResultSelection()
-      } else if (event.key === Qt.Key_R) {
+      } else if (matchesBinding("restart", event.key)) {
         resultIndex = 0
         activateResultSelection()
       } else return
@@ -455,11 +929,11 @@ Item {
       return
     }
 
-    if (event.key === Qt.Key_Left || event.key === Qt.Key_A || event.key === Qt.Key_H) {
+    if (matchesBinding("left", event.key)) {
       if (!event.isAutoRepeat) pressHorizontal(-1)
-    } else if (event.key === Qt.Key_Right || event.key === Qt.Key_D || event.key === Qt.Key_L) {
+    } else if (matchesBinding("right", event.key)) {
       if (!event.isAutoRepeat) pressHorizontal(1)
-    } else if (event.key === Qt.Key_Down || event.key === Qt.Key_S || event.key === Qt.Key_J) {
+    } else if (matchesBinding("down", event.key)) {
       if (!event.isAutoRepeat) {
         downHeld = true
         perform("down")
@@ -467,17 +941,24 @@ Item {
         softDropRepeat.repeat = false
         softDropRepeat.restart()
       }
-    } else if (event.key === Qt.Key_X) {
+    } else if (matchesBinding("rotateRight", event.key)) {
       if (!event.isAutoRepeat) pressRotation(1)
-    } else if (event.key === Qt.Key_Z) {
+    } else if (matchesBinding("rotateLeft", event.key)) {
       if (!event.isAutoRepeat) pressRotation(-1)
-    } else if (event.key === Qt.Key_Space) perform("drop")
-    else if (event.key === Qt.Key_C || event.key === Qt.Key_Shift) perform("hold")
-    else if (event.key === Qt.Key_B) toggleBlockStyle()
-    else if (event.key === Qt.Key_P) { game.paused = !game.paused; refresh() }
-    else if (event.key === Qt.Key_R) {
-      if (overlayActive) {
+    } else if (matchesBinding("drop", event.key)) { if (!event.isAutoRepeat) perform("drop") }
+    else if (matchesBinding("hold", event.key)) { if (!event.isAutoRepeat) perform("hold") }
+    else if (matchesBinding("blockStyle", event.key)) { if (!event.isAutoRepeat) toggleBlockStyle() }
+    else if (matchesBinding("pause", event.key)) {
+      if (!event.isAutoRepeat) { game.paused = !game.paused; refresh() }
+    } else if (matchesBinding("mute", event.key)) {
+      if (!event.isAutoRepeat) audioSettings.muted = !audioSettings.muted
+    } else if (matchesBinding("restart", event.key)) {
+      if (event.isAutoRepeat) { event.accepted = true; return }
+      if (finishIfLocalBest()) {
+        // A second Restart from the results screen starts the next run.
+      } else if (overlayActive) {
         game = Game.newGame("overlay")
+        audioController.watchGame(game)
         resetHeldInputs()
         refresh()
       } else startGame(game.mode)
@@ -487,20 +968,20 @@ Item {
 
   function handleGameKeyReleased(event) {
     if (event.isAutoRepeat) return
-    if (event.key === Qt.Key_Left || event.key === Qt.Key_A || event.key === Qt.Key_H) {
+    if (matchesBinding("left", event.key)) {
       releaseHorizontal(-1)
       event.accepted = true
-    } else if (event.key === Qt.Key_Right || event.key === Qt.Key_D || event.key === Qt.Key_L) {
+    } else if (matchesBinding("right", event.key)) {
       releaseHorizontal(1)
       event.accepted = true
-    } else if (event.key === Qt.Key_Down || event.key === Qt.Key_S || event.key === Qt.Key_J) {
+    } else if (matchesBinding("down", event.key)) {
       downHeld = false
       softDropRepeat.stop()
       event.accepted = true
-    } else if (event.key === Qt.Key_X) {
+    } else if (matchesBinding("rotateRight", event.key)) {
       releaseRotation(1)
       event.accepted = true
-    } else if (event.key === Qt.Key_Z) {
+    } else if (matchesBinding("rotateLeft", event.key)) {
       releaseRotation(-1)
       event.accepted = true
     }
@@ -515,6 +996,7 @@ Item {
     minimumSize: Qt.size(900, 680)
 
     onVisibleChanged: {
+      if (!visible) root.stopGlobalHotkeyCapture("")
       if (!visible && !root.overlayActive && !root.closingFromHost
           && root.shell && typeof root.shell.hide === "function")
         root.shell.hide("com.80kv.omatris")
@@ -575,10 +1057,11 @@ Item {
 
                 Repeater {
                   model: [
-                    { mode: "classic", title: "CLASSIC", detail: "Clear 40 lines · speed increases every 10" },
-                    { mode: "endless", title: "ENDLESS", detail: "Play until top-out · chase a high score" },
+                    { mode: "classic", title: "CLASSIC", detail: "Clear 40 lines · local best " + root.highScoreForMode("classic") },
+                    { mode: "endless", title: "ENDLESS", detail: "Play until top-out · local best " + root.highScoreForMode("endless") },
                     { mode: "practice", title: "PRACTICE", detail: "Adjustable gravity · the board resets instead of ending" },
-                    { mode: "overlay", title: "OVERLAY  ·  EXPERIMENTAL", detail: "Play over a window on this workspace" }
+                    { mode: "overlay", title: "OVERLAY  ·  EXPERIMENTAL", detail: "Play over a window · local best " + root.highScoreForMode("overlay") },
+                    { mode: "settings", title: "SETTINGS", detail: "Audio levels · fully customizable controls" }
                   ]
 
                   delegate: Rectangle {
@@ -604,7 +1087,8 @@ Item {
                         radius: 2
                         color: modelData.mode === "classic" ? root.accent
                           : modelData.mode === "endless" ? root.urgent
-                          : modelData.mode === "overlay" ? root.foreground : root.muted
+                          : modelData.mode === "overlay" ? root.foreground
+                          : modelData.mode === "settings" ? root.accent : root.muted
                       }
 
                       Column {
@@ -649,6 +1133,260 @@ Item {
                 color: root.muted
                 font.family: Style.fontFamily
                 font.pixelSize: 12
+              }
+            }
+
+            Column {
+              id: settingsView
+              visible: root.view === "settings"
+              anchors.centerIn: parent
+              width: Math.min(760, parent.width)
+              spacing: 13
+
+              Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: "SETTINGS"
+                color: root.foreground
+                font.family: Style.fontFamily
+                font.pixelSize: 27
+                font.weight: Font.DemiBold
+                font.letterSpacing: 2
+              }
+
+              Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: "AUDIO"
+                color: root.accent
+                font.family: Style.fontFamily
+                font.pixelSize: 11
+                font.weight: Font.DemiBold
+                font.letterSpacing: 1.4
+              }
+
+              Row {
+                anchors.horizontalCenter: parent.horizontalCenter
+                spacing: 14
+
+                VolumeSetting {
+                  label: "MUSIC"
+                  value: audioSettings.musicVolume
+                  selected: root.settingsFocus === 0
+                  editing: root.editingVolume === "music"
+                  onHovered: root.settingsFocus = 0
+                  onVolumeSelected: function(value) { root.setVolume("music", value) }
+                }
+
+                VolumeSetting {
+                  label: "EFFECTS"
+                  value: audioSettings.effectsVolume
+                  selected: root.settingsFocus === 1
+                  editing: root.editingVolume === "effects"
+                  onHovered: root.settingsFocus = 1
+                  onVolumeSelected: function(value) { root.setVolume("effects", value) }
+                }
+              }
+
+              Row {
+                width: parent.width
+
+                Text {
+                  text: "CONTROLS"
+                  color: root.accent
+                  font.family: Style.fontFamily
+                  font.pixelSize: 11
+                  font.weight: Font.DemiBold
+                  font.letterSpacing: 1.4
+                }
+
+                Item { width: parent.width - 181; height: 1 }
+
+                Text {
+                  text: "PRIMARY    SECONDARY"
+                  color: root.muted
+                  font.family: Style.fontFamily
+                  font.pixelSize: 9
+                  font.letterSpacing: 0.6
+                }
+              }
+
+              Grid {
+                anchors.horizontalCenter: parent.horizontalCenter
+                columns: 2
+                columnSpacing: 10
+                rowSpacing: 7
+
+                Repeater {
+                  model: root.controlDefinitions()
+
+                  delegate: Rectangle {
+                    required property int index
+                    required property var modelData
+                    property bool selected: root.controlSlotFocused(index, 0) || root.controlSlotFocused(index, 1)
+                    width: 375
+                    height: 42
+                    radius: Math.max(0, Style.cornerRadius * 0.4)
+                    color: selected ? root.subtle : "transparent"
+                    border.width: 1
+                    border.color: selected ? root.outline : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.07)
+
+                    Text {
+                      anchors.left: parent.left
+                      anchors.leftMargin: 13
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: modelData.label
+                      color: root.foreground
+                      font.family: Style.fontFamily
+                      font.pixelSize: 10
+                      font.weight: Font.DemiBold
+                      font.letterSpacing: 0.5
+                    }
+
+                    Row {
+                      anchors.right: parent.right
+                      anchors.rightMargin: 7
+                      anchors.verticalCenter: parent.verticalCenter
+                      spacing: 6
+
+                      BindingButton {
+                        label: root.keyName(root.bindingValue(modelData.action, 0))
+                        selected: root.controlSlotFocused(index, 0)
+                        listening: root.rebindingAction === modelData.action && root.rebindingSlot === 0
+                        onClicked: {
+                          root.settingsFocus = SettingsNavigation.controlFocus(index, 0)
+                          root.beginRebind(modelData.action, 0)
+                        }
+                      }
+                      BindingButton {
+                        label: root.keyName(root.bindingValue(modelData.action, 1))
+                        selected: root.controlSlotFocused(index, 1)
+                        listening: root.rebindingAction === modelData.action && root.rebindingSlot === 1
+                        onClicked: {
+                          root.settingsFocus = SettingsNavigation.controlFocus(index, 1)
+                          root.beginRebind(modelData.action, 1)
+                        }
+                      }
+                    }
+
+                    MouseArea {
+                      anchors.fill: parent
+                      z: -1
+                      hoverEnabled: true
+                      onEntered: root.settingsFocus = SettingsNavigation.controlFocus(index, 0)
+                    }
+                  }
+                }
+              }
+
+              Row {
+                width: parent.width
+
+                Text {
+                  text: "GLOBAL SHORTCUT"
+                  color: root.accent
+                  font.family: Style.fontFamily
+                  font.pixelSize: 11
+                  font.weight: Font.DemiBold
+                  font.letterSpacing: 1.4
+                }
+
+                Item { width: parent.width - 221; height: 1 }
+
+                Text {
+                  text: "DELETE TO REMOVE"
+                  color: root.muted
+                  font.family: Style.fontFamily
+                  font.pixelSize: 9
+                  font.letterSpacing: 0.6
+                }
+              }
+
+              Rectangle {
+                id: globalHotkeyBox
+                property bool selected: root.settingsFocus === SettingsNavigation.hotkeyFocus(root.controlDefinitions().length)
+                width: parent.width
+                height: 44
+                radius: Math.max(0, Style.cornerRadius * 0.4)
+                color: selected ? root.subtle : "transparent"
+                border.width: root.capturingGlobalHotkey ? 2 : 1
+                border.color: root.hotkeyError ? root.urgent : selected ? root.accent : root.outline
+
+                Text {
+                  anchors.left: parent.left
+                  anchors.leftMargin: 13
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "OPEN OMATRIS"
+                  color: root.foreground
+                  font.family: Style.fontFamily
+                  font.pixelSize: 10
+                  font.weight: Font.DemiBold
+                  font.letterSpacing: 0.5
+                }
+
+                Text {
+                  anchors.right: parent.right
+                  anchors.rightMargin: 13
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: root.hotkeyBusy ? "CHECKING…"
+                    : root.capturingGlobalHotkey ? "PRESS SHORTCUT"
+                    : root.globalHotkey || "NOT SET"
+                  color: root.hotkeyError ? root.urgent : root.capturingGlobalHotkey ? root.accent : root.muted
+                  font.family: Style.fontFamily
+                  font.pixelSize: 10
+                  font.weight: Font.DemiBold
+                  font.letterSpacing: 0.5
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onEntered: root.settingsFocus = SettingsNavigation.hotkeyFocus(root.controlDefinitions().length)
+                  onClicked: {
+                    root.settingsFocus = SettingsNavigation.hotkeyFocus(root.controlDefinitions().length)
+                    root.beginGlobalHotkeyCapture()
+                  }
+                }
+              }
+
+              Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: root.settingsNotice || "Select a key slot, then press the replacement key"
+                color: root.hotkeyError ? root.urgent
+                  : root.rebindingAction || root.capturingGlobalHotkey || root.hotkeyBusy ? root.accent : root.muted
+                font.family: Style.fontFamily
+                font.pixelSize: 10
+              }
+
+              Row {
+                anchors.horizontalCenter: parent.horizontalCenter
+                spacing: 10
+
+                ActionButton {
+                  label: "RESET CONTROLS"
+                  selected: root.settingsFocus === SettingsNavigation.actionFocus(root.controlDefinitions().length, 0)
+                  onHovered: root.settingsFocus = SettingsNavigation.actionFocus(root.controlDefinitions().length, 0)
+                  onClicked: root.resetControlBindings()
+                }
+                ActionButton {
+                  label: audioSettings.muted ? "UNMUTE" : "MUTE AUDIO"
+                  selected: root.settingsFocus === SettingsNavigation.actionFocus(root.controlDefinitions().length, 1)
+                  onHovered: root.settingsFocus = SettingsNavigation.actionFocus(root.controlDefinitions().length, 1)
+                  onClicked: audioSettings.muted = !audioSettings.muted
+                }
+                ActionButton {
+                  label: "BACK"
+                  selected: root.settingsFocus === SettingsNavigation.actionFocus(root.controlDefinitions().length, 2)
+                  onHovered: root.settingsFocus = SettingsNavigation.actionFocus(root.controlDefinitions().length, 2)
+                  onClicked: root.returnToMenu()
+                }
+              }
+
+              Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: "ARROWS move  ·  TAB / SHIFT+TAB cycle  ·  ENTER edit/select  ·  ESC back"
+                color: root.muted
+                font.family: Style.fontFamily
+                font.pixelSize: 10
               }
             }
 
@@ -821,6 +1559,7 @@ Item {
                 }
 
                 StatBlock { label: "SCORE"; value: { root.revision; return root.game ? String(root.game.score).padStart(7, "0") : "0000000" } }
+                StatBlock { label: "BEST"; value: { root.revision; return root.game && root.game.mode !== "practice" ? String(root.highScoreForMode(root.game.mode)).padStart(7, "0") : "—" } }
                 StatBlock { label: "LINES"; value: { root.revision; return root.game ? String(root.game.lines) : "0" } }
                 StatBlock { label: "LEVEL"; value: { root.revision; return root.game ? String(root.game.level) : "1" } }
 
@@ -947,6 +1686,14 @@ Item {
                     }
                   }
 
+                  BoardEffects {
+                    anchors.fill: parent
+                    anchors.margins: 5
+                    controller: root
+                    game: root.game
+                    revision: root.revision
+                  }
+
                   Rectangle {
                     visible: { root.revision; return root.game && root.game.paused && root.game.status === "playing" }
                     anchors.fill: parent
@@ -1024,12 +1771,12 @@ Item {
                 Column {
                   spacing: 7
                   Text { text: "CONTROLS"; color: root.foreground; font.family: Style.fontFamily; font.pixelSize: 12; font.weight: Font.DemiBold }
-                  Text { text: "← →  MOVE"; color: root.muted; font.family: Style.fontFamily; font.pixelSize: 11 }
-                  Text { text: "↓     SOFT DROP"; color: root.muted; font.family: Style.fontFamily; font.pixelSize: 11 }
-                  Text { text: "Z / X ROTATE"; color: root.muted; font.family: Style.fontFamily; font.pixelSize: 11 }
-                  Text { text: "SPACE HARD DROP"; color: root.muted; font.family: Style.fontFamily; font.pixelSize: 11 }
-                  Text { text: "C     HOLD"; color: root.muted; font.family: Style.fontFamily; font.pixelSize: 11 }
-                  Text { text: "B     BLOCK STYLE"; color: root.muted; font.family: Style.fontFamily; font.pixelSize: 11 }
+                  Text { text: root.bindingSummary("left") + " / " + root.bindingSummary("right") + "  MOVE"; color: root.muted; font.family: Style.fontFamily; font.pixelSize: 10 }
+                  Text { text: root.bindingSummary("down") + "  SOFT DROP"; color: root.muted; font.family: Style.fontFamily; font.pixelSize: 10 }
+                  Text { text: root.bindingSummary("rotateLeft") + " / " + root.bindingSummary("rotateRight") + "  ROTATE"; color: root.muted; font.family: Style.fontFamily; font.pixelSize: 10 }
+                  Text { text: root.bindingSummary("drop") + "  HARD DROP"; color: root.muted; font.family: Style.fontFamily; font.pixelSize: 10 }
+                  Text { text: root.bindingSummary("hold") + "  HOLD"; color: root.muted; font.family: Style.fontFamily; font.pixelSize: 10 }
+                  Text { text: root.bindingSummary("mute") + "  MUTE"; color: root.muted; font.family: Style.fontFamily; font.pixelSize: 10 }
                 }
               }
             }
@@ -1080,6 +1827,17 @@ Item {
                   font.family: Style.fontFamily
                   font.pixelSize: 12
                   font.letterSpacing: 1
+                }
+
+                Text {
+                  visible: { root.revision; return root.game && root.game.isNewHighScore }
+                  anchors.horizontalCenter: parent.horizontalCenter
+                  text: "NEW LOCAL BEST"
+                  color: root.accent
+                  font.family: Style.fontFamily
+                  font.pixelSize: 13
+                  font.weight: Font.DemiBold
+                  font.letterSpacing: 1.5
                 }
 
                 Row {
@@ -1148,6 +1906,20 @@ Item {
     repeat: true
     onTriggered: {
       Game.tick(root.game)
+      root.refresh()
+    }
+  }
+
+  Timer {
+    interval: 50
+    running: {
+      root.revision
+      return (window.visible || root.overlayActive) && root.view === "game" && root.game
+          && root.game.status === "playing" && !root.game.paused && root.game.grounded
+    }
+    repeat: true
+    onTriggered: {
+      Game.advanceLockDelay(root.game, interval)
       root.refresh()
     }
   }
@@ -1291,6 +2063,134 @@ Item {
       Text { text: "OFF"; color: root.muted; font.family: Style.fontFamily; font.pixelSize: 9 }
       Item { width: parent.width - 50; height: 1 }
       Text { text: "1.5×"; color: root.muted; font.family: Style.fontFamily; font.pixelSize: 9 }
+    }
+  }
+
+  component VolumeSetting: Rectangle {
+    id: volumeSetting
+    required property string label
+    required property real value
+    property bool selected: false
+    property bool editing: false
+    signal volumeSelected(real value)
+    signal hovered
+
+    width: 373
+    height: 66
+    radius: Math.max(0, Style.cornerRadius * 0.45)
+    color: selected ? root.subtle : "transparent"
+    border.width: editing ? 2 : 1
+    border.color: selected ? root.accent : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.09)
+
+    Text {
+      anchors.left: parent.left
+      anchors.leftMargin: 13
+      anchors.top: parent.top
+      anchors.topMargin: 10
+      text: volumeSetting.label
+      color: root.foreground
+      font.family: Style.fontFamily
+      font.pixelSize: 10
+      font.weight: Font.DemiBold
+      font.letterSpacing: 0.8
+    }
+
+    Text {
+      anchors.right: parent.right
+      anchors.rightMargin: 13
+      anchors.top: parent.top
+      anchors.topMargin: 10
+      text: (volumeSetting.editing ? "←  " : "") + Math.round(volumeSetting.value * 100) + "%" + (volumeSetting.editing ? "  →" : "")
+      color: root.accent
+      font.family: Style.fontFamily
+      font.pixelSize: 10
+      font.weight: Font.DemiBold
+    }
+
+    Item {
+      id: volumeTrackArea
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.bottom: parent.bottom
+      anchors.leftMargin: 13
+      anchors.rightMargin: 13
+      anchors.bottomMargin: 10
+      height: 22
+
+      Rectangle {
+        id: volumeTrack
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.verticalCenter: parent.verticalCenter
+        height: 5
+        radius: height / 2
+        color: root.subtle
+
+        Rectangle {
+          width: parent.width * volumeSetting.value
+          height: parent.height
+          radius: parent.radius
+          color: root.accent
+        }
+
+        Rectangle {
+          width: 14
+          height: 14
+          radius: 7
+          antialiasing: true
+          x: (volumeTrack.width - width) * volumeSetting.value
+          anchors.verticalCenter: parent.verticalCenter
+          color: root.foreground
+          border.width: 2
+          border.color: root.accent
+        }
+      }
+
+      MouseArea {
+        anchors.fill: parent
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        onEntered: volumeSetting.hovered()
+
+        function selectAt(mouseX) {
+          volumeSetting.volumeSelected(Math.max(0, Math.min(1, mouseX / width)))
+        }
+
+        onPressed: function(mouse) { selectAt(mouse.x) }
+        onPositionChanged: function(mouse) { if (pressed) selectAt(mouse.x) }
+        onReleased: keyCatcher.forceActiveFocus()
+      }
+    }
+  }
+
+  component BindingButton: Rectangle {
+    id: bindingButton
+    required property string label
+    property bool selected: false
+    property bool listening: false
+    signal clicked
+
+    width: 78
+    height: 28
+    radius: Math.max(0, Style.cornerRadius * 0.32)
+    color: listening ? root.accent : selected ? root.subtle : "transparent"
+    border.width: 1
+    border.color: listening || selected ? root.accent : root.outline
+
+    Text {
+      anchors.centerIn: parent
+      text: bindingButton.listening ? "PRESS KEY" : bindingButton.label
+      color: bindingButton.listening ? root.background : bindingButton.selected ? root.foreground : root.muted
+      font.family: Style.fontFamily
+      font.pixelSize: bindingButton.listening ? 8 : 9
+      font.weight: Font.DemiBold
+      elide: Text.ElideRight
+    }
+
+    MouseArea {
+      anchors.fill: parent
+      cursorShape: Qt.PointingHandCursor
+      onClicked: bindingButton.clicked()
     }
   }
 

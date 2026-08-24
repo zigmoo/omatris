@@ -83,7 +83,7 @@ PanelWindow {
       y: overlay.targetY + overlay.targetHeight - height
       width: overlay.boardWidth
       height: overlay.boardHeight
-      clip: true
+      clip: false
 
       Grid {
         anchors.fill: parent
@@ -159,6 +159,14 @@ PanelWindow {
             }
           }
         }
+      }
+
+
+      BoardEffects {
+        anchors.fill: parent
+        controller: overlay.controller
+        game: overlay.game
+        revision: overlay.revision
       }
 
       // Open-top rails reveal the collision walls without turning the
@@ -248,7 +256,8 @@ PanelWindow {
           font.letterSpacing: 0.7
         }
         Text {
-          text: "ESC exit  ·  R restart  ·  C hold"
+          text: "ESC exit  ·  " + controller.bindingSummary("restart") + " restart  ·  "
+            + controller.bindingSummary("hold") + " hold"
           color: controller.muted
           font.family: Style.fontFamily
           font.pixelSize: 9

@@ -2,6 +2,8 @@
 
 var WIDTH = 10
 var HEIGHT = 20
+var LOCK_DELAY = 500
+var MAX_LOCK_RESETS = 15
 
 var SHAPES = {
   I: [
@@ -46,6 +48,31 @@ var SHAPES = {
     ["....", "LLL.", "L...", "...."],
     ["LL..", ".L..", ".L..", "...."]
   ]
+}
+
+// SRS kick coordinates converted to the board's coordinate system, where
+// positive y points down. TETR.IO's SRS+ keeps the regular JLSTZ table and
+// mirrors the I piece's right-side kicks onto its left-side transitions.
+var JLSTZ_KICKS = {
+  "0>1": [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]],
+  "1>0": [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]],
+  "1>2": [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]],
+  "2>1": [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]],
+  "2>3": [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]],
+  "3>2": [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]],
+  "3>0": [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]],
+  "0>3": [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]]
+}
+
+var I_KICKS_SRS_PLUS = {
+  "0>1": [[0, 0], [-2, 0], [1, 0], [-2, 1], [1, -2]],
+  "1>0": [[0, 0], [2, 0], [-1, 0], [2, -1], [-1, 2]],
+  "1>2": [[0, 0], [-1, 0], [2, 0], [-1, -2], [2, 1]],
+  "2>1": [[0, 0], [1, 0], [-2, 0], [1, 2], [-2, -1]],
+  "2>3": [[0, 0], [-1, 0], [2, 0], [-1, 2], [2, -1]],
+  "3>2": [[0, 0], [1, 0], [-2, 0], [1, -2], [-2, 1]],
+  "3>0": [[0, 0], [-2, 0], [1, 0], [-2, -1], [1, 2]],
+  "0>3": [[0, 0], [2, 0], [-1, 0], [2, 1], [-1, -2]]
 }
 
 function emptyBoard() {
@@ -101,6 +128,12 @@ function collides(state, piece, dx, dy, rotation) {
 function spawn(state, kind) {
   state.current = { kind: kind, rotation: 0, x: 3, y: -1 }
   state.canHold = true
+  state.lastAction = "spawn"
+  state.lastRotationKick = -1
+  state.grounded = false
+  state.lockDelayRemaining = LOCK_DELAY
+  state.lockResets = 0
+  state.pendingHardDropDistance = 0
   if (collides(state, state.current, 0, 0, 0)) {
     if (state.mode === "practice") {
       state.board = emptyBoard()
@@ -134,6 +167,23 @@ function newGame(mode) {
     practiceSpeed: 1.0,
     status: "playing",
     paused: false,
+    lastAction: "spawn",
+    lastRotationKick: -1,
+    grounded: false,
+    lockDelayRemaining: LOCK_DELAY,
+    lockResets: 0,
+    tSpins: 0,
+    tSpinMinis: 0,
+    effectSerial: 0,
+    lastLandingEdges: [],
+    lastLockedCells: [],
+    lastLandedKind: "",
+    lastHardDropDistance: 0,
+    lastLockSpin: "",
+    lastClearedRows: [],
+    pendingHardDropDistance: 0,
+    highScoreRecorded: false,
+    isNewHighScore: false,
     lastEvent: mode === "practice" ? "No top-outs. Take your time." : "Good luck"
   }
   fillQueue(state)
@@ -141,29 +191,98 @@ function newGame(mode) {
   return state
 }
 
+function qualifiesForLocalBest(state, previousBest) {
+  return !!state
+    && state.status === "playing"
+    && state.mode !== "practice"
+    && state.score > (previousBest || 0)
+}
+
+function endRun(state) {
+  if (!state || state.status !== "playing") return false
+  state.status = "over"
+  state.paused = false
+  state.lastEvent = "Run ended"
+  return true
+}
+
 function move(state, dx, dy, awardSoftDrop) {
   if (!state || state.status !== "playing" || state.paused) return false
   if (!collides(state, state.current, dx, dy, state.current.rotation)) {
+    var wasGrounded = state.grounded
     state.current.x += dx
     state.current.y += dy
+    state.lastAction = "move"
+    state.lastRotationKick = -1
+    updateGroundedState(state, wasGrounded, awardSoftDrop !== false)
     if (dy > 0 && awardSoftDrop !== false) state.score += 1
     return true
   }
   return false
 }
 
+function updateGroundedState(state, wasGrounded, allowReset) {
+  state.grounded = collides(state, state.current, 0, 1, state.current.rotation)
+  if (!state.grounded) {
+    state.lockDelayRemaining = LOCK_DELAY
+    return
+  }
+  if (!wasGrounded) {
+    state.lockDelayRemaining = LOCK_DELAY
+  } else if (allowReset && state.lockResets < MAX_LOCK_RESETS) {
+    state.lockDelayRemaining = LOCK_DELAY
+    state.lockResets += 1
+  }
+}
+
 function rotate(state, direction) {
   if (!state || state.status !== "playing" || state.paused) return false
-  var nextRotation = (state.current.rotation + direction + 4) % 4
-  var kicks = [0, -1, 1, -2, 2]
+  var currentRotation = state.current.rotation
+  var nextRotation = (currentRotation + direction + 4) % 4
+  var kickTable = state.current.kind === "I" ? I_KICKS_SRS_PLUS : JLSTZ_KICKS
+  var kicks = state.current.kind === "O" ? [[0, 0]] : kickTable[currentRotation + ">" + nextRotation]
   for (var i = 0; i < kicks.length; i++) {
-    if (!collides(state, state.current, kicks[i], 0, nextRotation)) {
-      state.current.x += kicks[i]
+    if (!collides(state, state.current, kicks[i][0], kicks[i][1], nextRotation)) {
+      var wasGrounded = state.grounded
+      state.current.x += kicks[i][0]
+      state.current.y += kicks[i][1]
       state.current.rotation = nextRotation
+      state.lastAction = "rotate"
+      state.lastRotationKick = i
+      updateGroundedState(state, wasGrounded, true)
       return true
     }
   }
   return false
+}
+
+function occupiedForTSpin(state, x, y) {
+  if (x < 0 || x >= WIDTH || y >= HEIGHT) return true
+  if (y < 0) return false
+  return state.board[y][x] !== ""
+}
+
+function tSpinType(state) {
+  var piece = state.current
+  if (!piece || piece.kind !== "T" || state.lastAction !== "rotate") return ""
+
+  var centerX = piece.x + 1
+  var centerY = piece.y + 1
+  var corners = [
+    occupiedForTSpin(state, centerX - 1, centerY - 1),
+    occupiedForTSpin(state, centerX + 1, centerY - 1),
+    occupiedForTSpin(state, centerX + 1, centerY + 1),
+    occupiedForTSpin(state, centerX - 1, centerY + 1)
+  ]
+  var occupied = 0
+  for (var i = 0; i < corners.length; i++) if (corners[i]) occupied += 1
+  if (occupied < 3) return ""
+
+  var frontByRotation = [[0, 1], [1, 2], [2, 3], [3, 0]]
+  var front = frontByRotation[piece.rotation]
+  if ((corners[front[0]] && corners[front[1]]) || state.lastRotationKick === 4)
+    return "full"
+  return "mini"
 }
 
 function clearCompletedLines(state) {
@@ -186,15 +305,46 @@ function clearCompletedLines(state) {
   return cleared
 }
 
+function completedLineRows(state) {
+  var rows = []
+  for (var y = 0; y < HEIGHT; y++) {
+    var full = true
+    for (var x = 0; x < WIDTH; x++) {
+      if (state.board[y][x] === "") { full = false; break }
+    }
+    if (full) rows.push(y)
+  }
+  return rows
+}
+
+function landingEdgesFor(state, piece) {
+  var cells = cellsFor(piece.kind, piece.rotation)
+  var edges = []
+  for (var i = 0; i < cells.length; i++) {
+    var x = piece.x + cells[i].x
+    var y = piece.y + cells[i].y
+    if (y < 0) continue
+    if (y + 1 >= HEIGHT || state.board[y + 1][x] !== "")
+      edges.push({ x: x, y: y })
+  }
+  return edges
+}
+
 function lockPiece(state) {
   var piece = state.current
+  var spin = tSpinType(state)
+  var landingEdges = landingEdgesFor(state, piece)
   var cells = cellsFor(piece.kind, piece.rotation)
+  var lockedCells = []
   var aboveBoard = false
   for (var i = 0; i < cells.length; i++) {
     var x = piece.x + cells[i].x
     var y = piece.y + cells[i].y
     if (y < 0) aboveBoard = true
-    else state.board[y][x] = piece.kind
+    else {
+      state.board[y][x] = piece.kind
+      lockedCells.push({ x: x, y: y })
+    }
   }
 
   if (aboveBoard && state.mode !== "practice") {
@@ -204,27 +354,65 @@ function lockPiece(state) {
   }
   if (aboveBoard) state.board = emptyBoard()
 
+  var clearedRows = completedLineRows(state)
+  state.lastLandingEdges = landingEdges
+  state.lastLockedCells = lockedCells
+  state.lastLandedKind = piece.kind
+  state.lastHardDropDistance = state.pendingHardDropDistance || 0
+  state.lastLockSpin = spin
+  state.lastClearedRows = clearedRows
+  state.effectSerial += 1
+
   var cleared = clearCompletedLines(state)
-  if (cleared > 0) {
-    var points = [0, 100, 300, 500, 800][cleared] * state.level
+  if (spin) {
+    var spinScores = spin === "mini" ? [100, 200, 400, 0] : [400, 800, 1200, 1600]
+    var points = spinScores[cleared] * state.level
     state.score += points
     state.lines += cleared
-    state.lastEvent = cleared === 4 ? "Omatris  +" + points : cleared + (cleared === 1 ? " line" : " lines") + "  +" + points
+    if (spin === "mini") state.tSpinMinis += 1
+    else state.tSpins += 1
+    var spinName = spin === "mini" ? "T-Spin Mini" : "T-Spin"
+    var clearName = cleared === 1 ? " Single" : cleared === 2 ? " Double" : cleared === 3 ? " Triple" : ""
+    state.lastEvent = spinName + clearName + "  +" + points
+  } else if (cleared > 0) {
+    var linePoints = [0, 100, 300, 500, 800][cleared] * state.level
+    state.score += linePoints
+    state.lines += cleared
+    state.lastEvent = cleared === 4 ? "Omatris  +" + linePoints : cleared + (cleared === 1 ? " line" : " lines") + "  +" + linePoints
+  } else {
+    state.lastEvent = ""
+  }
+
+  if (cleared > 0) {
     if (state.mode !== "practice") state.level = 1 + Math.floor(state.lines / 10)
     if (state.mode === "classic" && state.lines >= 40) {
       state.status = "won"
       state.lastEvent = "40 lines complete"
       return
     }
-  } else {
-    state.lastEvent = ""
   }
   spawnNext(state)
 }
 
 function tick(state) {
   if (!state || state.status !== "playing" || state.paused) return false
-  if (!move(state, 0, 1, false)) lockPiece(state)
+  if (!move(state, 0, 1, false) && !state.grounded) {
+    state.grounded = true
+    state.lockDelayRemaining = LOCK_DELAY
+  }
+  return true
+}
+
+function advanceLockDelay(state, elapsed) {
+  if (!state || state.status !== "playing" || state.paused || !state.grounded) return false
+  if (!collides(state, state.current, 0, 1, state.current.rotation)) {
+    state.grounded = false
+    state.lockDelayRemaining = LOCK_DELAY
+    return false
+  }
+  state.lockDelayRemaining -= elapsed
+  if (state.lockDelayRemaining > 0) return false
+  lockPiece(state)
   return true
 }
 
@@ -232,7 +420,12 @@ function hardDrop(state) {
   if (!state || state.status !== "playing" || state.paused) return false
   var distance = 0
   while (!collides(state, state.current, 0, distance + 1, state.current.rotation)) distance += 1
+  state.pendingHardDropDistance = distance
   state.current.y += distance
+  if (distance > 0) {
+    state.lastAction = "move"
+    state.lastRotationKick = -1
+  }
   state.score += distance * 2
   lockPiece(state)
   return true

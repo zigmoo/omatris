@@ -12,6 +12,10 @@ external runtime dependencies.
 - **Overlay (experimental)** — choose a suitable window on the current workspace
   and play on a transparent board aligned to its bottom edge.
 
+Classic, Endless, and Overlay keep separate local high scores. Omatris uses
+SRS+ rotation: standard SRS wall and floor kicks with TETR.IO-style symmetric
+I-piece kicks. T-spins and T-spin minis are detected and scored.
+
 Overlay mode temporarily takes keyboard focus while leaving the target window
 visible underneath. Compact Hold and Next previews scale into the side space
 beside the board. Press `Esc` to return to the picker. The first prototype is
@@ -20,6 +24,10 @@ closed, hidden, or moved away.
 
 Every menu can be operated without a mouse: use the arrow keys to move the
 highlight and `Enter` or `Space` to activate it.
+
+Omatris includes an original synthesized soundtrack and responsive effects for
+movement, rotation, drops, locks, line clears, T-spins, and game over. Music and
+effects levels are stored locally and can be adjusted independently in Settings.
 
 Omatris is a single-session plugin. Opening it from the bar, a shell hotkey, or
 `omarchy-shell shell summon` reuses the same loaded panel; a repeated summon
@@ -52,10 +60,34 @@ a keybinding or terminal without creating another instance:
 omarchy-shell shell summon com.80kv.omatris '{}'
 ```
 
-To update or remove the installed plugin later:
+## Updating
+
+If Omatris was installed from GitHub, update it with:
 
 ```bash
 omarchy plugin update com.80kv.omatris
+```
+
+Omarchy fetches the latest release, shows the changes for confirmation,
+validates the updated plugin, and refreshes the shell plugin registry. Your
+local high scores, audio levels, custom controls, and global shortcut are kept.
+If the shell still displays a cached older version, reload it once:
+
+```bash
+omarchy restart shell
+```
+
+For a local development checkout, pull the repository and refresh the installed
+copy instead:
+
+```bash
+git pull --ff-only
+./scripts/install-local.sh
+```
+
+To remove Omatris:
+
+```bash
 omarchy plugin remove com.80kv.omatris
 ```
 
@@ -110,16 +142,32 @@ omarchy-shell shell summon com.80kv.omatris '{"mode":"practice"}'
 | --- | --- |
 | Arrow keys | Navigate menus |
 | Enter or Space | Select a menu action |
-| Arrow left/right, A/D, H/L | Move |
-| Arrow down, S, J | Soft drop |
-| X | Rotate clockwise |
+| Arrow left/right or A/D | Move |
+| Arrow down or S | Soft drop |
+| X or Arrow up | Rotate clockwise |
 | Z | Rotate counter-clockwise |
 | Space | Hard drop |
 | C or Shift | Hold |
 | B | Switch solid/outline block style |
 | P | Pause |
 | R | Restart |
+| M | Mute audio |
 | Escape | Mode menu / close |
+
+Gameplay controls have two editable slots per action. Open **Settings** from
+the mode menu, select either slot, and press the replacement key. Duplicate
+keys are reassigned automatically; Escape remains reserved as a safe way back.
+
+Settings also includes a global **Open Omatris** shortcut. Select its box and
+press a combination containing Super, Ctrl, or Alt. Omatris checks the active
+Hyprland bindings and identifies conflicts without replacing them. Press
+`Delete` or `Backspace` while editing the box to remove the shortcut.
+
+The bundled audio is generated from original synthesis code. To regenerate it:
+
+```bash
+node scripts/generate-audio.js
+```
 
 ## Theme integration
 
@@ -132,12 +180,10 @@ they stay distinct without clashing with the desktop.
 
 Ideas planned for future releases:
 
-- Persistent local high scores and play statistics.
-- Customizable controls, movement repeat timing, and drop behavior.
+- Persistent play statistics.
+- Customizable movement repeat timing and drop behavior.
 - Colorblind-friendly and higher-contrast piece palettes.
 - Controls for overlay opacity, guides, and preview visibility.
-- A full Super Rotation System with more authentic wall kicks.
-- Optional background music with mute and volume controls.
 
 The first release stays intentionally focused: a polished core game, live
 Omarchy theming, keyboard-first menus, and the experimental window Overlay.
@@ -147,8 +193,7 @@ Omarchy theming, keyboard-first menus, and the experimental window Overlay.
 Before submitting a release to the marketplace, add a screenshot and run:
 
 ```bash
-omarchy plugin validate .
-node tests/game.test.js
+./scripts/check.sh
 ```
 
 Keep the repository public with `manifest.json`, this README, and `LICENSE` in

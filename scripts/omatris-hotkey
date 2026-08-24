@@ -1,0 +1,185 @@
+#!/bin/bash
+
+set -euo pipefail
+
+operation=${1:-get}
+requested_combo=${2:-}
+bindings_file=${OMATRIS_BINDINGS_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/hypr/bindings.lua}
+backup_file="$bindings_file.omatris-before-hotkey"
+begin_marker="-- BEGIN OMATRIS HOTKEY"
+end_marker="-- END OMATRIS HOTKEY"
+
+json_message() {
+  jq -nc --arg status "$1" --arg shortcut "${2:-}" --arg message "${3:-}" \
+    '{status: $status, shortcut: $shortcut, message: $message}'
+}
+
+current_combo() {
+  sed -n '/^-- BEGIN OMATRIS HOTKEY$/,/^-- END OMATRIS HOTKEY$/s/^-- shortcut: //p' "$bindings_file" 2>/dev/null | tail -n 1
+}
+
+normalize_combo() {
+  local raw=${1^^}
+  raw=${raw//[[:space:]]/}
+  local part key="" mask=0 modifiers=0
+  IFS='+' read -ra parts <<< "$raw"
+  for part in "${parts[@]}"; do
+    case "$part" in
+      SUPER) mask=$((mask | 64)); modifiers=$((modifiers + 1)) ;;
+      CTRL|CONTROL) mask=$((mask | 4)); modifiers=$((modifiers + 1)) ;;
+      ALT) mask=$((mask | 8)); modifiers=$((modifiers + 1)) ;;
+      SHIFT) mask=$((mask | 1)); modifiers=$((modifiers + 1)) ;;
+      "") ;;
+      *)
+        if [[ -n "$key" ]]; then return 1; fi
+        key=$part
+        ;;
+    esac
+  done
+  if [[ -z "$key" || "$modifiers" -eq 0 || "$key" == *[^A-Z0-9_:-]* ]]; then return 1; fi
+  if (( (mask & (64 | 4 | 8)) == 0 )); then return 1; fi
+
+  local formatted=""
+  (( mask & 64 )) && formatted="SUPER"
+  (( mask & 4 )) && formatted+="${formatted:+ + }CTRL"
+  (( mask & 8 )) && formatted+="${formatted:+ + }ALT"
+  (( mask & 1 )) && formatted+="${formatted:+ + }SHIFT"
+  formatted+=" + $key"
+  printf '%s\t%s\t%s\n' "$formatted" "$mask" "$key"
+}
+
+active_bindings() {
+  if [[ -n "${OMATRIS_BINDS_JSON:-}" ]]; then
+    cat -- "$OMATRIS_BINDS_JSON"
+  else
+    hyprctl binds -j
+  fi
+}
+
+conflict_for() {
+  local mask=$1 key=$2
+  active_bindings | jq -r --argjson mask "$mask" --arg key "$key" '
+    [ .[]
+      | select((.submap // "") == "" and (.mouse // false) == false)
+      | select(.modmask == $mask and ((.key // "") | ascii_upcase) == ($key | ascii_upcase))
+      | select((.description // "") != "Open Omatris")
+      | (.description // "Unnamed action")
+    ] | unique | join(", ")
+  '
+}
+
+without_managed_block() {
+  awk -v begin="$begin_marker" -v end="$end_marker" '
+    $0 == begin { managed = 1; next }
+    $0 == end { managed = 0; next }
+    !managed { print }
+  ' "$bindings_file"
+}
+
+reload_and_validate() {
+  if [[ "${OMATRIS_SKIP_RELOAD:-0}" == "1" ]]; then return 0; fi
+  hyprctl reload >/dev/null
+  local errors
+  errors=$(hyprctl configerrors)
+  if [[ -n "${errors//[[:space:]]/}" ]]; then
+    cp -p -- "$backup_file" "$bindings_file"
+    hyprctl reload >/dev/null || true
+    json_message "error" "$(current_combo)" "Hyprland rejected the shortcut; the previous config was restored"
+    return 1
+  fi
+}
+
+reset_capture_submap() {
+  if [[ "${OMATRIS_SKIP_CAPTURE:-0}" == "1" ]]; then return 0; fi
+  hyprctl dispatch 'hl.dsp.submap("reset")' >/dev/null || true
+}
+
+write_binding() {
+  local combo=$1
+  local temp_file
+  temp_file=$(mktemp "${bindings_file}.omatris.XXXXXX")
+  without_managed_block > "$temp_file"
+  {
+    printf '\n%s\n' "$begin_marker"
+    printf '%s\n' '-- Managed by Omatris Settings. Remove this block to manage it manually.'
+    printf '%s\n' "-- shortcut: $combo"
+    printf '%s\n' 'hl.define_submap("omatris_capture", function()'
+    printf '%s\n' '  -- An unreachable placeholder keeps the otherwise empty pass-through map registered.'
+    printf '%s\n' '  hl.bind("code:0", function() end)'
+    printf '%s\n' 'end)'
+    if [[ -n "$combo" ]]; then
+      printf '%s\n' "o.bind(\"$combo\", \"Open Omatris\", [[omarchy-shell shell summon com.80kv.omatris '{}']])"
+    fi
+    printf '%s\n' "$end_marker"
+  } >> "$temp_file"
+  chmod --reference="$bindings_file" "$temp_file"
+  mv -- "$temp_file" "$bindings_file"
+}
+
+clear_binding() {
+  local temp_file
+  temp_file=$(mktemp "${bindings_file}.omatris.XXXXXX")
+  without_managed_block > "$temp_file"
+  chmod --reference="$bindings_file" "$temp_file"
+  mv -- "$temp_file" "$bindings_file"
+}
+
+case "$operation" in
+  get)
+    existing=$(current_combo)
+    json_message "ok" "$existing" "${existing:+Global shortcut active}"
+    ;;
+  set)
+    reset_capture_submap
+    if ! normalized=$(normalize_combo "$requested_combo"); then
+      json_message "invalid" "" "Use Super, Ctrl, or Alt together with one other key"
+      exit 2
+    fi
+    IFS=$'\t' read -r combo mask key <<< "$normalized"
+    conflict=$(conflict_for "$mask" "$key")
+    if [[ -n "$conflict" ]]; then
+      json_message "conflict" "$combo" "Already used by: $conflict"
+      exit 3
+    fi
+    mkdir -p -- "$(dirname -- "$bindings_file")"
+    touch -- "$bindings_file"
+    cp -p -- "$bindings_file" "$backup_file"
+    write_binding "$combo"
+    reload_and_validate || exit 4
+    json_message "ok" "$combo" "Global shortcut saved"
+    ;;
+  clear)
+    reset_capture_submap
+    if [[ ! -f "$bindings_file" ]] || [[ -z "$(current_combo)" ]]; then
+      json_message "ok" "" "No Omatris shortcut was set"
+      exit 0
+    fi
+    cp -p -- "$bindings_file" "$backup_file"
+    write_binding ""
+    reload_and_validate || exit 4
+    json_message "ok" "" "Global shortcut removed"
+    ;;
+  capture-on)
+    mkdir -p -- "$(dirname -- "$bindings_file")"
+    touch -- "$bindings_file"
+    existing=$(current_combo)
+    cp -p -- "$bindings_file" "$backup_file"
+    write_binding "$existing"
+    reload_and_validate || exit 4
+    if [[ "${OMATRIS_SKIP_CAPTURE:-0}" != "1" ]]; then
+      if ! hyprctl dispatch 'hl.dsp.submap("omatris_capture")' >/dev/null; then
+        json_message "error" "$existing" "Could not start protected shortcut capture"
+        exit 5
+      fi
+    fi
+    json_message "ok" "$existing" "Press a global shortcut · Esc cancels"
+    ;;
+  capture-off)
+    reset_capture_submap
+    json_message "ok" "$(current_combo)" "Shortcut capture canceled"
+    ;;
+  *)
+    json_message "error" "" "Unknown hotkey operation"
+    exit 2
+    ;;
+esac
