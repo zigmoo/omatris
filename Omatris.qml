@@ -27,6 +27,8 @@ Item {
   property var overlayCandidates: []
   property string overlayNotice: ""
   property int overlayPickerIndex: 0
+  property int menuIndex: 0
+  property int resultIndex: 0
 
   readonly property var overlayScreen: screenForMonitor(overlayTarget ? overlayTarget.monitor : null)
   property bool overlayTestingNoFocus: false
@@ -87,6 +89,7 @@ Item {
     resetHeldInputs()
     game = Game.newGame(mode)
     if (mode === "practice") game.practiceSpeed = previousPracticeSpeed
+    resultIndex = 0
     view = "game"
     revision += 1
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
@@ -123,7 +126,9 @@ Item {
       })
     }
     overlayCandidates = candidates
-    overlayPickerIndex = Math.max(0, Math.min(overlayPickerIndex, candidates.length - 1))
+    // The two positions after the windows are Refresh and Back. Keeping them
+    // in one index makes the entire picker reachable with the same keys.
+    overlayPickerIndex = Math.max(0, Math.min(overlayPickerIndex, candidates.length + 1))
     if (candidates.length === 0)
       overlayNotice = "No suitable windows found on this workspace."
     else if (overlayNotice === "No suitable windows found on this workspace.")
@@ -165,6 +170,7 @@ Item {
 
     resetHeldInputs()
     game = Game.newGame("overlay")
+    resultIndex = 0
     overlayTarget = toplevel
     overlayTargetAddress = overlayIdentity(toplevel)
     overlayActive = true
@@ -333,6 +339,41 @@ Item {
     return "PRACTICE"
   }
 
+  function activateMenuSelection() {
+    var modes = ["classic", "endless", "practice", "overlay"]
+    var mode = modes[Math.max(0, Math.min(menuIndex, modes.length - 1))]
+    if (mode === "overlay") showOverlayPicker()
+    else startGame(mode)
+  }
+
+  function activateOverlayPickerSelection() {
+    var candidateCount = overlayCandidates.length
+    if (overlayPickerIndex < candidateCount) {
+      startOverlay(overlayCandidates[overlayPickerIndex].toplevel)
+    } else if (overlayPickerIndex === candidateCount) {
+      Hyprland.refreshToplevels()
+      Qt.callLater(rebuildOverlayCandidates)
+    } else {
+      returnToMenu()
+    }
+  }
+
+  function activateResultSelection() {
+    if (resultIndex === 0) {
+      if (overlayActive) {
+        game = Game.newGame("overlay")
+        resetHeldInputs()
+        refresh()
+      } else {
+        startGame(game.mode)
+      }
+    } else if (overlayActive) {
+      stopOverlay("")
+    } else {
+      returnToMenu()
+    }
+  }
+
   function perform(action) {
     if (!game) return
     if (action === "left") Game.move(game, -1, 0)
@@ -355,7 +396,16 @@ Item {
     }
 
     if (view === "menu") {
-      if (event.key === Qt.Key_O) {
+      if (!event.isAutoRepeat && (event.key === Qt.Key_Up || event.key === Qt.Key_Left)) {
+        menuIndex = (menuIndex + 3) % 4
+        event.accepted = true
+      } else if (!event.isAutoRepeat && (event.key === Qt.Key_Down || event.key === Qt.Key_Right)) {
+        menuIndex = (menuIndex + 1) % 4
+        event.accepted = true
+      } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
+        activateMenuSelection()
+        event.accepted = true
+      } else if (event.key === Qt.Key_O) {
         showOverlayPicker()
         event.accepted = true
       }
@@ -367,20 +417,35 @@ Item {
         Hyprland.refreshToplevels()
         Qt.callLater(rebuildOverlayCandidates)
         event.accepted = true
-      } else if (event.key === Qt.Key_Up || event.key === Qt.Key_K) {
-        overlayPickerIndex = Math.max(0, overlayPickerIndex - 1)
+      } else if (!event.isAutoRepeat && (event.key === Qt.Key_Up || event.key === Qt.Key_Left || event.key === Qt.Key_K)) {
+        overlayPickerIndex = (overlayPickerIndex + overlayCandidates.length + 1) % (overlayCandidates.length + 2)
         event.accepted = true
-      } else if (event.key === Qt.Key_Down || event.key === Qt.Key_J) {
-        overlayPickerIndex = Math.min(overlayCandidates.length - 1, overlayPickerIndex + 1)
+      } else if (!event.isAutoRepeat && (event.key === Qt.Key_Down || event.key === Qt.Key_Right || event.key === Qt.Key_J)) {
+        overlayPickerIndex = (overlayPickerIndex + 1) % (overlayCandidates.length + 2)
         event.accepted = true
-      } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) && overlayCandidates.length > 0) {
-        startOverlay(overlayCandidates[overlayPickerIndex].toplevel)
+      } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
+        activateOverlayPickerSelection()
         event.accepted = true
       }
       return
     }
 
     if (view !== "game" || !game) return
+    if (game.status !== "playing") {
+      if (!event.isAutoRepeat && (event.key === Qt.Key_Left || event.key === Qt.Key_Up)) {
+        resultIndex = 0
+      } else if (!event.isAutoRepeat && (event.key === Qt.Key_Right || event.key === Qt.Key_Down)) {
+        resultIndex = 1
+      } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
+        activateResultSelection()
+      } else if (event.key === Qt.Key_R) {
+        resultIndex = 0
+        activateResultSelection()
+      } else return
+      event.accepted = true
+      return
+    }
+
     if (event.key === Qt.Key_Left || event.key === Qt.Key_A || event.key === Qt.Key_H) {
       if (!event.isAutoRepeat) pressHorizontal(-1)
     } else if (event.key === Qt.Key_Right || event.key === Qt.Key_D || event.key === Qt.Key_L) {
@@ -508,13 +573,15 @@ Item {
                   ]
 
                   delegate: Rectangle {
+                    required property int index
                     required property var modelData
+                    property bool selected: index === root.menuIndex
                     width: parent.width
                     height: 72
                     radius: Math.max(0, Style.cornerRadius * 0.65)
-                    color: modeMouse.containsMouse ? root.subtle : "transparent"
+                    color: modeMouse.containsMouse || selected ? root.subtle : "transparent"
                     border.width: 1
-                    border.color: modeMouse.containsMouse ? root.accent : root.subtle
+                    border.color: modeMouse.containsMouse || selected ? root.accent : root.subtle
 
                     Row {
                       anchors.fill: parent
@@ -557,9 +624,10 @@ Item {
                       anchors.fill: parent
                       hoverEnabled: true
                       cursorShape: Qt.PointingHandCursor
+                      onEntered: root.menuIndex = index
                       onClicked: {
-                        if (modelData.mode === "overlay") root.showOverlayPicker()
-                        else root.startGame(modelData.mode)
+                        root.menuIndex = index
+                        root.activateMenuSelection()
                       }
                     }
                   }
@@ -568,7 +636,7 @@ Item {
 
               Text {
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: "O overlay    ← → move    ↑ / Z rotate    SPACE drop    C hold    P pause"
+                text: "↑ ↓ choose  ·  Enter select  ·  O overlay"
                 color: root.muted
                 font.family: Style.fontFamily
                 font.pixelSize: 12
@@ -668,6 +736,7 @@ Item {
                       anchors.fill: parent
                       hoverEnabled: true
                       cursorShape: Qt.PointingHandCursor
+                      onEntered: root.overlayPickerIndex = index
                       onClicked: {
                         root.overlayPickerIndex = index
                         root.startOverlay(modelData.toplevel)
@@ -691,18 +760,27 @@ Item {
                 spacing: 10
                 ActionButton {
                   label: "REFRESH"
+                  selected: root.overlayPickerIndex === root.overlayCandidates.length
                   onClicked: {
+                    root.overlayPickerIndex = root.overlayCandidates.length
                     Hyprland.refreshToplevels()
                     Qt.callLater(root.rebuildOverlayCandidates)
                     keyCatcher.forceActiveFocus()
                   }
                 }
-                ActionButton { label: "BACK"; onClicked: root.returnToMenu() }
+                ActionButton {
+                  label: "BACK"
+                  selected: root.overlayPickerIndex === root.overlayCandidates.length + 1
+                  onClicked: {
+                    root.overlayPickerIndex = root.overlayCandidates.length + 1
+                    root.returnToMenu()
+                  }
+                }
               }
 
               Text {
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: "↑ ↓ select  ·  Enter / Space play  ·  R refresh  ·  Esc back"
+                text: "Arrow keys choose  ·  Enter select  ·  R refresh  ·  Esc back"
                 color: root.muted
                 font.family: Style.fontFamily
                 font.pixelSize: 10
@@ -996,13 +1074,21 @@ Item {
                 Row {
                   anchors.horizontalCenter: parent.horizontalCenter
                   spacing: 10
-                  ActionButton { label: "RESTART"; onClicked: root.startGame(root.game.mode) }
-                  ActionButton { label: "MODES"; onClicked: root.returnToMenu() }
+                  ActionButton {
+                    label: "RESTART"
+                    selected: root.resultIndex === 0
+                    onClicked: { root.resultIndex = 0; root.activateResultSelection() }
+                  }
+                  ActionButton {
+                    label: "MODES"
+                    selected: root.resultIndex === 1
+                    onClicked: { root.resultIndex = 1; root.activateResultSelection() }
+                  }
                 }
 
                 Text {
                   anchors.horizontalCenter: parent.horizontalCenter
-                  text: "R restart  ·  Esc modes"
+                  text: "← → choose  ·  Enter select  ·  R restart  ·  Esc modes"
                   color: root.muted
                   font.family: Style.fontFamily
                   font.pixelSize: 11
@@ -1197,13 +1283,14 @@ Item {
 
   component ActionButton: Rectangle {
     required property string label
+    property bool selected: false
     signal clicked
     width: 128
     height: 40
     radius: Math.max(0, Style.cornerRadius * 0.4)
-    color: actionMouse.containsMouse ? root.subtle : "transparent"
+    color: actionMouse.containsMouse || selected ? root.subtle : "transparent"
     border.width: 1
-    border.color: actionMouse.containsMouse ? root.accent : root.outline
+    border.color: actionMouse.containsMouse || selected ? root.accent : root.outline
 
     Text {
       anchors.centerIn: parent

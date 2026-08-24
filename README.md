@@ -13,9 +13,13 @@ external runtime dependencies.
   and play on a transparent board aligned to its bottom edge.
 
 Overlay mode temporarily takes keyboard focus while leaving the target window
-visible underneath. Press `Esc` to return to the picker. The first prototype is
+visible underneath. Compact Hold and Next previews scale into the side space
+beside the board. Press `Esc` to return to the picker. The first prototype is
 limited to visible windows on the current workspace and exits if the target is
 closed, hidden, or moved away.
+
+Every menu can be operated without a mouse: use the arrow keys to move the
+highlight and `Enter` or `Space` to activate it.
 
 ## Test locally
 
@@ -74,6 +78,8 @@ omarchy-shell shell summon com.80kv.omatris '{"mode":"practice"}'
 
 | Key | Action |
 | --- | --- |
+| Arrow keys | Navigate menus |
+| Enter or Space | Select a menu action |
 | Arrow left/right, A/D, H/L | Move |
 | Arrow down, S, J | Soft drop |
 | Arrow up, X, K | Rotate clockwise |

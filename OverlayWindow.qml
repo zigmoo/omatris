@@ -20,6 +20,8 @@ PanelWindow {
   readonly property real targetHeight: targetIpc && targetIpc.size ? targetIpc.size[1] : 0
   readonly property real boardWidth: Math.max(0, Math.min(targetWidth - 12, (targetHeight - 12) / 2))
   readonly property real boardHeight: boardWidth * 2
+  readonly property real sideGutter: Math.max(0, (targetWidth - boardWidth) / 2)
+  readonly property real previewWidth: Math.max(28, Math.min(84, sideGutter - 8))
 
   visible: controller && controller.overlayActive
   screen: controller ? controller.overlayScreen : null
@@ -159,6 +161,21 @@ PanelWindow {
       }
     }
 
+    OverlayPreview {
+      title: "HOLD"
+      piece: { overlay.revision; return game ? game.hold : "" }
+      x: overlay.targetX + Math.max(4, (overlay.sideGutter - width) / 2)
+      y: overlay.targetY + 84
+    }
+
+    OverlayPreview {
+      title: "NEXT"
+      piece: { overlay.revision; return game && game.queue.length ? game.queue[0] : "" }
+      x: overlay.targetX + overlay.targetWidth - width
+        - Math.max(4, (overlay.sideGutter - width) / 2)
+      y: overlay.targetY + 84
+    }
+
     Rectangle {
       x: overlay.targetX + 12
       y: overlay.targetY + 12
@@ -236,12 +253,98 @@ PanelWindow {
           font.pixelSize: 14
           font.weight: Font.DemiBold
         }
-        Text {
+        Row {
+          visible: game && !game.paused
           anchors.horizontalCenter: parent.horizontalCenter
-          text: game && game.paused ? "P continue  ·  Esc exit" : "R restart  ·  Esc exit"
+          spacing: 8
+
+          Repeater {
+            model: ["RESTART", "EXIT"]
+            delegate: Rectangle {
+              required property int index
+              required property string modelData
+              width: 92
+              height: 30
+              radius: Math.max(0, Style.cornerRadius * 0.35)
+              color: controller.resultIndex === index ? controller.subtle : "transparent"
+              border.width: 1
+              border.color: controller.resultIndex === index ? controller.accent : controller.outline
+
+              Text {
+                anchors.centerIn: parent
+                text: modelData
+                color: controller.resultIndex === index ? controller.accent : controller.muted
+                font.family: Style.fontFamily
+                font.pixelSize: 9
+                font.weight: Font.DemiBold
+                font.letterSpacing: 0.8
+              }
+            }
+          }
+        }
+
+        Text {
+          visible: game && game.paused
+          anchors.horizontalCenter: parent.horizontalCenter
+          text: "P continue  ·  Esc exit"
           color: controller.muted
           font.family: Style.fontFamily
           font.pixelSize: 10
+        }
+      }
+    }
+  }
+
+  component OverlayPreview: Rectangle {
+    id: preview
+    required property string title
+    required property string piece
+    readonly property real cellSize: Math.max(4, Math.min(14, (width - 8) / 4))
+
+    width: overlay.previewWidth
+    height: width + 20
+    radius: Math.max(0, Style.cornerRadius * 0.35)
+    color: Qt.rgba(controller.background.r, controller.background.g, controller.background.b, 0.78)
+    border.width: 1
+    border.color: Qt.rgba(controller.foreground.r, controller.foreground.g, controller.foreground.b, 0.14)
+
+    Text {
+      anchors.top: parent.top
+      anchors.topMargin: 5
+      anchors.horizontalCenter: parent.horizontalCenter
+      text: preview.title
+      color: controller.muted
+      font.family: Style.fontFamily
+      font.pixelSize: Math.max(7, Math.min(9, preview.width * 0.14))
+      font.weight: Font.DemiBold
+      font.letterSpacing: 0.6
+    }
+
+    Grid {
+      anchors.horizontalCenter: parent.horizontalCenter
+      anchors.bottom: parent.bottom
+      anchors.bottomMargin: 5
+      columns: 4
+      rows: 4
+      spacing: 0
+
+      Repeater {
+        model: 16
+        delegate: Rectangle {
+          required property int index
+          property int previewRow: Math.floor(index / 4)
+          property int previewColumn: index % 4
+          property bool filled: Game.previewCell(preview.piece, previewRow, previewColumn)
+          property color pieceColor: controller.pieceColor(preview.piece)
+          width: preview.cellSize
+          height: preview.cellSize
+          color: !filled ? "transparent"
+            : controller.blockStyle === "outline" ? controller.blockInterior : pieceColor
+
+          Rectangle { visible: parent.filled && controller.blockStyle === "outline" && !Game.previewCell(preview.piece, parent.previewRow - 1, parent.previewColumn); anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; height: 1; color: parent.pieceColor }
+          Rectangle { visible: parent.filled && controller.blockStyle === "outline" && !Game.previewCell(preview.piece, parent.previewRow + 1, parent.previewColumn); anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; height: 1; color: parent.pieceColor }
+          Rectangle { visible: parent.filled && controller.blockStyle === "outline" && !Game.previewCell(preview.piece, parent.previewRow, parent.previewColumn - 1); anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; width: 1; color: parent.pieceColor }
+          Rectangle { visible: parent.filled && controller.blockStyle === "outline" && !Game.previewCell(preview.piece, parent.previewRow, parent.previewColumn + 1); anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom; width: 1; color: parent.pieceColor }
         }
       }
     }
