@@ -579,9 +579,9 @@ Item {
                     width: parent.width
                     height: 72
                     radius: Math.max(0, Style.cornerRadius * 0.65)
-                    color: modeMouse.containsMouse || selected ? root.subtle : "transparent"
+                    color: selected ? root.subtle : "transparent"
                     border.width: 1
-                    border.color: modeMouse.containsMouse || selected ? root.accent : root.subtle
+                    border.color: selected ? root.accent : root.subtle
 
                     Row {
                       anchors.fill: parent
@@ -682,9 +682,9 @@ Item {
                     width: parent.width
                     height: 62
                     radius: Math.max(0, Style.cornerRadius * 0.5)
-                    color: targetMouse.containsMouse || selected ? root.subtle : "transparent"
+                    color: selected ? root.subtle : "transparent"
                     border.width: 1
-                    border.color: targetMouse.containsMouse || selected ? root.accent : root.subtle
+                    border.color: selected ? root.accent : root.subtle
 
                     Row {
                       anchors.fill: parent
@@ -761,6 +761,7 @@ Item {
                 ActionButton {
                   label: "REFRESH"
                   selected: root.overlayPickerIndex === root.overlayCandidates.length
+                  onHovered: root.overlayPickerIndex = root.overlayCandidates.length
                   onClicked: {
                     root.overlayPickerIndex = root.overlayCandidates.length
                     Hyprland.refreshToplevels()
@@ -771,6 +772,7 @@ Item {
                 ActionButton {
                   label: "BACK"
                   selected: root.overlayPickerIndex === root.overlayCandidates.length + 1
+                  onHovered: root.overlayPickerIndex = root.overlayCandidates.length + 1
                   onClicked: {
                     root.overlayPickerIndex = root.overlayCandidates.length + 1
                     root.returnToMenu()
@@ -1077,11 +1079,13 @@ Item {
                   ActionButton {
                     label: "RESTART"
                     selected: root.resultIndex === 0
+                    onHovered: root.resultIndex = 0
                     onClicked: { root.resultIndex = 0; root.activateResultSelection() }
                   }
                   ActionButton {
                     label: "MODES"
                     selected: root.resultIndex === 1
+                    onHovered: root.resultIndex = 1
                     onClicked: { root.resultIndex = 1; root.activateResultSelection() }
                   }
                 }
@@ -1285,12 +1289,13 @@ Item {
     required property string label
     property bool selected: false
     signal clicked
+    signal hovered
     width: 128
     height: 40
     radius: Math.max(0, Style.cornerRadius * 0.4)
-    color: actionMouse.containsMouse || selected ? root.subtle : "transparent"
+    color: selected ? root.subtle : "transparent"
     border.width: 1
-    border.color: actionMouse.containsMouse || selected ? root.accent : root.outline
+    border.color: selected ? root.accent : root.outline
 
     Text {
       anchors.centerIn: parent
@@ -1307,6 +1312,7 @@ Item {
       anchors.fill: parent
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
+      onEntered: parent.hovered()
       onClicked: parent.clicked()
     }
   }
