@@ -25,7 +25,41 @@ Omatris is a single-session plugin. Opening it from the bar, a shell hotkey, or
 `omarchy-shell shell summon` reuses the same loaded panel; a repeated summon
 will not create another window or reset an active game or overlay.
 
-## Test locally
+## Installation
+
+Omatris requires the Omarchy Quattro shell and has no additional runtime
+dependencies. Install and enable it directly from GitHub:
+
+```bash
+omarchy plugin add https://github.com/Akira-80kv/omatris.git --enable
+```
+
+That single command downloads the plugin, validates its manifest, and adds the
+Omatris icon to the right side of the bar. Click the icon to open it.
+
+To place the icon somewhere else, move it with Omarchy's bar command:
+
+```bash
+omarchy bar move com.80kv.omatris --section left
+omarchy bar move com.80kv.omatris --section center
+omarchy bar move com.80kv.omatris --section right
+```
+
+Only run the command for the position you want. You can also open Omatris from
+a keybinding or terminal without creating another instance:
+
+```bash
+omarchy-shell shell summon com.80kv.omatris '{}'
+```
+
+To update or remove the installed plugin later:
+
+```bash
+omarchy plugin update com.80kv.omatris
+omarchy plugin remove com.80kv.omatris
+```
+
+## Local development
 
 Run the automated manifest and game-engine checks:
 
@@ -53,14 +87,6 @@ on the right side of the bar with:
 
 ```bash
 omarchy plugin enable com.80kv.omatris --section right --after omarchy.agents
-```
-
-## Install
-
-Once this repository is public, it can be installed with:
-
-```bash
-omarchy plugin add <repository-url> --enable
 ```
 
 During local development, place or clone the repository at
@@ -102,9 +128,22 @@ foregrounds, accents, urgency colors, fonts, borders, and corner radii update
 with the current theme. Tetromino colors are derived from the same palette, so
 they stay distinct without clashing with the desktop.
 
+## Roadmap
+
+Ideas planned for future releases:
+
+- Persistent local high scores and play statistics.
+- Customizable controls, movement repeat timing, and drop behavior.
+- Colorblind-friendly and higher-contrast piece palettes.
+- Controls for overlay opacity, guides, and preview visibility.
+- A full Super Rotation System with more authentic wall kicks.
+
+The first release stays intentionally focused: a polished core game, live
+Omarchy theming, keyboard-first menus, and the experimental window Overlay.
+
 ## Publish
 
-Before publishing, replace `<repository-url>` above, add a screenshot, and run:
+Before submitting a release to the marketplace, add a screenshot and run:
 
 ```bash
 omarchy plugin validate .
