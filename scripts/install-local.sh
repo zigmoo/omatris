@@ -9,7 +9,7 @@ install_dir="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/$plugin_id"
 omarchy plugin validate "$project_dir"
 mkdir -p "$install_dir"
 
-for runtime_file in manifest.json Game.js Omatris.qml BarWidget.qml; do
+for runtime_file in manifest.json Game.js Omatris.qml OverlayWindow.qml BarWidget.qml; do
   install -m 0644 "$project_dir/$runtime_file" "$install_dir/$runtime_file"
 done
 

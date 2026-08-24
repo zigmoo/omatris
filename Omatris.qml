@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import Quickshell
+import Quickshell.Hyprland
 import qs.Commons
 import "Game.js" as Game
 
@@ -20,6 +21,15 @@ Item {
   property bool rotateLeftHeld: false
   property bool rotateRightHeld: false
   property int rotationDirection: 0
+  property bool overlayActive: false
+  property var overlayTarget: null
+  property string overlayTargetAddress: ""
+  property var overlayCandidates: []
+  property string overlayNotice: ""
+  property int overlayPickerIndex: 0
+
+  readonly property var overlayScreen: screenForMonitor(overlayTarget ? overlayTarget.monitor : null)
+  property bool overlayTestingNoFocus: false
 
   readonly property color background: Color.background
   readonly property color foreground: Color.foreground
@@ -33,26 +43,41 @@ Item {
 
   function open(payloadJson) {
     closingFromHost = false
+    overlayActive = false
+    overlayTarget = null
+    overlayTargetAddress = ""
     window.visible = true
     var requestedMode = ""
+    var requestedOverlay = false
     if (payloadJson) {
       try {
         var payload = JSON.parse(String(payloadJson))
         if (payload && ["classic", "endless", "practice"].indexOf(payload.mode) >= 0)
           requestedMode = payload.mode
+        else if (payload && payload.mode === "overlay")
+          requestedOverlay = true
       } catch (error) { /* Ignore malformed optional payloads. */ }
     }
     if (requestedMode) startGame(requestedMode)
+    else if (requestedOverlay) showOverlayPicker()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
   function close() {
+    overlayActive = false
+    overlayTarget = null
+    overlayTargetAddress = ""
+    resetHeldInputs()
     closingFromHost = true
     window.visible = false
     closingFromHost = false
   }
 
   function requestClose() {
+    if (overlayActive) {
+      stopOverlay("")
+      return
+    }
     if (shell && typeof shell.hide === "function") shell.hide("com.80kv.omatris")
     else window.visible = false
   }
@@ -65,6 +90,121 @@ Item {
     view = "game"
     revision += 1
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function screenForMonitor(monitor) {
+    if (!monitor) return null
+    var screens = Quickshell.screens
+    for (var i = 0; i < screens.length; i++) {
+      if (screens[i] && screens[i].name === monitor.name) return screens[i]
+      var candidateMonitor = Hyprland.monitorFor(screens[i])
+      if (candidateMonitor && candidateMonitor.id === monitor.id) return screens[i]
+    }
+    return null
+  }
+
+  function rebuildOverlayCandidates() {
+    var candidates = []
+    var values = Hyprland.toplevels && Hyprland.toplevels.values ? Hyprland.toplevels.values : []
+    for (var i = 0; i < values.length; i++) {
+      var toplevel = values[i]
+      var ipc = toplevel ? toplevel.lastIpcObject : null
+      if (!toplevel || !ipc || !toplevel.workspace || !toplevel.workspace.active) continue
+      if (ipc.mapped === false || ipc.hidden === true) continue
+      if (String(ipc.class || "") === "org.quickshell") continue
+      if (!ipc.at || !ipc.size || ipc.size[0] < 220 || ipc.size[1] < 320) continue
+      candidates.push({
+        toplevel: toplevel,
+        title: String(toplevel.title || ipc.title || ipc.class || "Untitled window"),
+        appClass: String(ipc.class || "Application"),
+        width: ipc.size[0],
+        height: ipc.size[1],
+        floating: ipc.floating === true
+      })
+    }
+    overlayCandidates = candidates
+    overlayPickerIndex = Math.max(0, Math.min(overlayPickerIndex, candidates.length - 1))
+    if (candidates.length === 0)
+      overlayNotice = "No suitable windows found on this workspace."
+    else if (overlayNotice === "No suitable windows found on this workspace.")
+      overlayNotice = ""
+  }
+
+  function normalizedAddress(address) {
+    return String(address || "").toLowerCase().replace(/^0x/, "")
+  }
+
+  function overlayIdentity(toplevel) {
+    if (!toplevel) return ""
+    var ipc = toplevel.lastIpcObject
+    if (ipc && ipc.stableId) return "stable:" + String(ipc.stableId)
+    return "address:" + normalizedAddress(toplevel.address)
+  }
+
+  function showOverlayPicker() {
+    resetHeldInputs()
+    overlayNotice = ""
+    overlayPickerIndex = 0
+    view = "overlayPicker"
+    Hyprland.refreshToplevels()
+    Qt.callLater(rebuildOverlayCandidates)
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function startOverlay(toplevel) {
+    if (!toplevel || !toplevel.lastIpcObject) return
+    var ipc = toplevel.lastIpcObject
+    if (!ipc.size || ipc.size[0] < 220 || ipc.size[1] < 320) {
+      overlayNotice = "That window is too small for a readable playfield."
+      return
+    }
+    if (!screenForMonitor(toplevel.monitor)) {
+      overlayNotice = "Could not match that window to a display."
+      return
+    }
+
+    resetHeldInputs()
+    game = Game.newGame("overlay")
+    overlayTarget = toplevel
+    overlayTargetAddress = overlayIdentity(toplevel)
+    overlayActive = true
+    view = "game"
+    revision += 1
+
+    closingFromHost = true
+    window.visible = false
+    closingFromHost = false
+  }
+
+  function stopOverlay(message) {
+    overlayActive = false
+    overlayTarget = null
+    overlayTargetAddress = ""
+    resetHeldInputs()
+    overlayNotice = message || ""
+    view = "overlayPicker"
+    window.visible = true
+    Hyprland.refreshToplevels()
+    Qt.callLater(rebuildOverlayCandidates)
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function syncOverlayTarget() {
+    if (!overlayActive || !overlayTargetAddress) return
+    var values = Hyprland.toplevels && Hyprland.toplevels.values ? Hyprland.toplevels.values : []
+    for (var i = 0; i < values.length; i++) {
+      var candidate = values[i]
+      if (candidate && overlayIdentity(candidate) === overlayTargetAddress) {
+        var ipc = candidate.lastIpcObject
+        if (!candidate.workspace || !candidate.workspace.active || !ipc || ipc.hidden === true) {
+          stopOverlay("The selected window is no longer visible here.")
+          return
+        }
+        overlayTarget = candidate
+        return
+      }
+    }
+    stopOverlay("The selected window was closed.")
   }
 
   function refresh() {
@@ -189,6 +329,7 @@ Item {
   function modeTitle(mode) {
     if (mode === "classic") return "CLASSIC · 40 LINES"
     if (mode === "endless") return "ENDLESS"
+    if (mode === "overlay") return "OVERLAY"
     return "PRACTICE"
   }
 
@@ -204,6 +345,93 @@ Item {
     refresh()
   }
 
+  function handleGameKeyPressed(event, fromOverlay) {
+    if (event.key === Qt.Key_Escape) {
+      if (fromOverlay || overlayActive) stopOverlay("")
+      else if (view === "game" || view === "overlayPicker") returnToMenu()
+      else requestClose()
+      event.accepted = true
+      return
+    }
+
+    if (view === "menu") {
+      if (event.key === Qt.Key_O) {
+        showOverlayPicker()
+        event.accepted = true
+      }
+      return
+    }
+
+    if (view === "overlayPicker") {
+      if (event.key === Qt.Key_R) {
+        Hyprland.refreshToplevels()
+        Qt.callLater(rebuildOverlayCandidates)
+        event.accepted = true
+      } else if (event.key === Qt.Key_Up || event.key === Qt.Key_K) {
+        overlayPickerIndex = Math.max(0, overlayPickerIndex - 1)
+        event.accepted = true
+      } else if (event.key === Qt.Key_Down || event.key === Qt.Key_J) {
+        overlayPickerIndex = Math.min(overlayCandidates.length - 1, overlayPickerIndex + 1)
+        event.accepted = true
+      } else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) && overlayCandidates.length > 0) {
+        startOverlay(overlayCandidates[overlayPickerIndex].toplevel)
+        event.accepted = true
+      }
+      return
+    }
+
+    if (view !== "game" || !game) return
+    if (event.key === Qt.Key_Left || event.key === Qt.Key_A || event.key === Qt.Key_H) {
+      if (!event.isAutoRepeat) pressHorizontal(-1)
+    } else if (event.key === Qt.Key_Right || event.key === Qt.Key_D || event.key === Qt.Key_L) {
+      if (!event.isAutoRepeat) pressHorizontal(1)
+    } else if (event.key === Qt.Key_Down || event.key === Qt.Key_S || event.key === Qt.Key_J) {
+      if (!event.isAutoRepeat) {
+        downHeld = true
+        perform("down")
+        softDropRepeat.interval = 100
+        softDropRepeat.repeat = false
+        softDropRepeat.restart()
+      }
+    } else if (event.key === Qt.Key_Up || event.key === Qt.Key_X || event.key === Qt.Key_K) {
+      if (!event.isAutoRepeat) pressRotation(1)
+    } else if (event.key === Qt.Key_Z) {
+      if (!event.isAutoRepeat) pressRotation(-1)
+    } else if (event.key === Qt.Key_Space) perform("drop")
+    else if (event.key === Qt.Key_C || event.key === Qt.Key_Shift) perform("hold")
+    else if (event.key === Qt.Key_B) toggleBlockStyle()
+    else if (event.key === Qt.Key_P) { game.paused = !game.paused; refresh() }
+    else if (event.key === Qt.Key_R) {
+      if (overlayActive) {
+        game = Game.newGame("overlay")
+        resetHeldInputs()
+        refresh()
+      } else startGame(game.mode)
+    } else return
+    event.accepted = true
+  }
+
+  function handleGameKeyReleased(event) {
+    if (event.isAutoRepeat) return
+    if (event.key === Qt.Key_Left || event.key === Qt.Key_A || event.key === Qt.Key_H) {
+      releaseHorizontal(-1)
+      event.accepted = true
+    } else if (event.key === Qt.Key_Right || event.key === Qt.Key_D || event.key === Qt.Key_L) {
+      releaseHorizontal(1)
+      event.accepted = true
+    } else if (event.key === Qt.Key_Down || event.key === Qt.Key_S || event.key === Qt.Key_J) {
+      downHeld = false
+      softDropRepeat.stop()
+      event.accepted = true
+    } else if (event.key === Qt.Key_Up || event.key === Qt.Key_X || event.key === Qt.Key_K) {
+      releaseRotation(1)
+      event.accepted = true
+    } else if (event.key === Qt.Key_Z) {
+      releaseRotation(-1)
+      event.accepted = true
+    }
+  }
+
   FloatingWindow {
     id: window
     title: "Omatris"
@@ -213,7 +441,8 @@ Item {
     minimumSize: Qt.size(900, 680)
 
     onVisibleChanged: {
-      if (!visible && !root.closingFromHost && root.shell && typeof root.shell.hide === "function")
+      if (!visible && !root.overlayActive && !root.closingFromHost
+          && root.shell && typeof root.shell.hide === "function")
         root.shell.hide("com.80kv.omatris")
     }
 
@@ -222,64 +451,8 @@ Item {
       anchors.fill: parent
       focus: true
 
-      Keys.onPressed: function(event) {
-        if (event.key === Qt.Key_Escape) {
-          if (root.view === "game") root.returnToMenu()
-          else root.requestClose()
-          event.accepted = true
-          return
-        }
-        if (root.view !== "game" || !root.game) return
-        if (event.key === Qt.Key_Left || event.key === Qt.Key_A || event.key === Qt.Key_H) {
-          if (!event.isAutoRepeat) root.pressHorizontal(-1)
-        }
-        else if (event.key === Qt.Key_Right || event.key === Qt.Key_D || event.key === Qt.Key_L) {
-          if (!event.isAutoRepeat) root.pressHorizontal(1)
-        }
-        else if (event.key === Qt.Key_Down || event.key === Qt.Key_S || event.key === Qt.Key_J) {
-          if (!event.isAutoRepeat) {
-            root.downHeld = true
-            root.perform("down")
-            softDropRepeat.interval = 100
-            softDropRepeat.repeat = false
-            softDropRepeat.restart()
-          }
-        }
-        else if (event.key === Qt.Key_Up || event.key === Qt.Key_X || event.key === Qt.Key_K) {
-          if (!event.isAutoRepeat) root.pressRotation(1)
-        }
-        else if (event.key === Qt.Key_Z) {
-          if (!event.isAutoRepeat) root.pressRotation(-1)
-        }
-        else if (event.key === Qt.Key_Space) root.perform("drop")
-        else if (event.key === Qt.Key_C || event.key === Qt.Key_Shift) root.perform("hold")
-        else if (event.key === Qt.Key_B) root.toggleBlockStyle()
-        else if (event.key === Qt.Key_P) { root.game.paused = !root.game.paused; root.refresh() }
-        else if (event.key === Qt.Key_R) root.startGame(root.game.mode)
-        else return
-        event.accepted = true
-      }
-
-      Keys.onReleased: function(event) {
-        if (event.isAutoRepeat) return
-        if (event.key === Qt.Key_Left || event.key === Qt.Key_A || event.key === Qt.Key_H) {
-          root.releaseHorizontal(-1)
-          event.accepted = true
-        } else if (event.key === Qt.Key_Right || event.key === Qt.Key_D || event.key === Qt.Key_L) {
-          root.releaseHorizontal(1)
-          event.accepted = true
-        } else if (event.key === Qt.Key_Down || event.key === Qt.Key_S || event.key === Qt.Key_J) {
-          root.downHeld = false
-          softDropRepeat.stop()
-          event.accepted = true
-        } else if (event.key === Qt.Key_Up || event.key === Qt.Key_X || event.key === Qt.Key_K) {
-          root.releaseRotation(1)
-          event.accepted = true
-        } else if (event.key === Qt.Key_Z) {
-          root.releaseRotation(-1)
-          event.accepted = true
-        }
-      }
+      Keys.onPressed: function(event) { root.handleGameKeyPressed(event, false) }
+      Keys.onReleased: function(event) { root.handleGameKeyReleased(event) }
 
       Rectangle {
         anchors.fill: parent
@@ -330,7 +503,8 @@ Item {
                   model: [
                     { mode: "classic", title: "CLASSIC", detail: "Clear 40 lines · speed increases every 10" },
                     { mode: "endless", title: "ENDLESS", detail: "Play until top-out · chase a high score" },
-                    { mode: "practice", title: "PRACTICE", detail: "Relaxed speed · the board resets instead of ending" }
+                    { mode: "practice", title: "PRACTICE", detail: "Adjustable gravity · the board resets instead of ending" },
+                    { mode: "overlay", title: "OVERLAY  ·  EXPERIMENTAL", detail: "Play over a window on this workspace" }
                   ]
 
                   delegate: Rectangle {
@@ -352,7 +526,9 @@ Item {
                         width: 9
                         height: 36
                         radius: 2
-                        color: modelData.mode === "classic" ? root.accent : modelData.mode === "endless" ? root.urgent : root.muted
+                        color: modelData.mode === "classic" ? root.accent
+                          : modelData.mode === "endless" ? root.urgent
+                          : modelData.mode === "overlay" ? root.foreground : root.muted
                       }
 
                       Column {
@@ -381,7 +557,10 @@ Item {
                       anchors.fill: parent
                       hoverEnabled: true
                       cursorShape: Qt.PointingHandCursor
-                      onClicked: root.startGame(modelData.mode)
+                      onClicked: {
+                        if (modelData.mode === "overlay") root.showOverlayPicker()
+                        else root.startGame(modelData.mode)
+                      }
                     }
                   }
                 }
@@ -389,10 +568,144 @@ Item {
 
               Text {
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: "← → move    ↑ / Z rotate    SPACE drop    C hold    P pause"
+                text: "O overlay    ← → move    ↑ / Z rotate    SPACE drop    C hold    P pause"
                 color: root.muted
                 font.family: Style.fontFamily
                 font.pixelSize: 12
+              }
+            }
+
+            Column {
+              id: overlayPickerView
+              visible: root.view === "overlayPicker"
+              anchors.centerIn: parent
+              width: Math.min(720, parent.width)
+              spacing: 16
+
+              Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: "CHOOSE AN OVERLAY WINDOW"
+                color: root.foreground
+                font.family: Style.fontFamily
+                font.pixelSize: 23
+                font.weight: Font.DemiBold
+                font.letterSpacing: 1.5
+              }
+
+              Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: "Omatris will appear above the selected window and temporarily use the keyboard."
+                color: root.muted
+                font.family: Style.fontFamily
+                font.pixelSize: 12
+              }
+
+              Column {
+                width: parent.width
+                spacing: 8
+
+                Repeater {
+                  model: root.overlayCandidates
+
+                  delegate: Rectangle {
+                    required property int index
+                    required property var modelData
+                    property bool selected: index === root.overlayPickerIndex
+                    width: parent.width
+                    height: 62
+                    radius: Math.max(0, Style.cornerRadius * 0.5)
+                    color: targetMouse.containsMouse || selected ? root.subtle : "transparent"
+                    border.width: 1
+                    border.color: targetMouse.containsMouse || selected ? root.accent : root.subtle
+
+                    Row {
+                      anchors.fill: parent
+                      anchors.margins: 14
+                      spacing: 14
+
+                      Rectangle {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 8
+                        height: 30
+                        radius: 2
+                        color: root.accent
+                      }
+
+                      Column {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: parent.width - 150
+                        spacing: 4
+                        Text {
+                          width: parent.width
+                          text: modelData.title
+                          elide: Text.ElideRight
+                          color: root.foreground
+                          font.family: Style.fontFamily
+                          font.pixelSize: 14
+                          font.weight: Font.DemiBold
+                        }
+                        Text {
+                          width: parent.width
+                          text: modelData.appClass
+                          elide: Text.ElideRight
+                          color: root.muted
+                          font.family: Style.fontFamily
+                          font.pixelSize: 10
+                        }
+                      }
+
+                      Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: modelData.width + "×" + modelData.height + (modelData.floating ? "  FLOAT" : "  TILE")
+                        color: root.muted
+                        font.family: Style.fontFamily
+                        font.pixelSize: 10
+                      }
+                    }
+
+                    MouseArea {
+                      id: targetMouse
+                      anchors.fill: parent
+                      hoverEnabled: true
+                      cursorShape: Qt.PointingHandCursor
+                      onClicked: {
+                        root.overlayPickerIndex = index
+                        root.startOverlay(modelData.toplevel)
+                      }
+                    }
+                  }
+                }
+              }
+
+              Text {
+                visible: root.overlayNotice !== ""
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: root.overlayNotice
+                color: root.urgent
+                font.family: Style.fontFamily
+                font.pixelSize: 11
+              }
+
+              Row {
+                anchors.horizontalCenter: parent.horizontalCenter
+                spacing: 10
+                ActionButton {
+                  label: "REFRESH"
+                  onClicked: {
+                    Hyprland.refreshToplevels()
+                    Qt.callLater(root.rebuildOverlayCandidates)
+                    keyCatcher.forceActiveFocus()
+                  }
+                }
+                ActionButton { label: "BACK"; onClicked: root.returnToMenu() }
+              }
+
+              Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: "↑ ↓ select  ·  Enter / Space play  ·  R refresh  ·  Esc back"
+                color: root.muted
+                font.family: Style.fontFamily
+                font.pixelSize: 10
               }
             }
 
@@ -702,11 +1015,34 @@ Item {
     }
   }
 
+  OverlayWindow {
+    id: overlayWindow
+    controller: root
+  }
+
+  Connections {
+    target: Hyprland.toplevels
+    function onValuesChanged() {
+      if (root.overlayActive) Qt.callLater(root.syncOverlayTarget)
+      else if (root.view === "overlayPicker") Qt.callLater(root.rebuildOverlayCandidates)
+    }
+  }
+
+  Timer {
+    interval: 140
+    repeat: true
+    running: root.overlayActive
+    onTriggered: {
+      Hyprland.refreshToplevels()
+      Qt.callLater(root.syncOverlayTarget)
+    }
+  }
+
   Timer {
     interval: { root.revision; return root.game ? Game.dropInterval(root.game) : 700 }
     running: {
       root.revision
-      return window.visible && root.view === "game" && root.game
+      return (window.visible || root.overlayActive) && root.view === "game" && root.game
           && root.game.status === "playing" && !root.game.paused
           && (root.game.mode !== "practice" || root.game.practiceSpeed > 0)
     }

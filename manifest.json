@@ -4,7 +4,7 @@
   "name": "Omatris",
   "version": "0.1.0",
   "author": "Akira Perez Quinto",
-  "description": "A modern, theme-aware falling-block game with Classic, Endless, and Practice modes.",
+  "description": "A modern, theme-aware falling-block game with Classic, Endless, Practice, and experimental Overlay modes.",
   "kinds": [
     "bar-widget",
     "panel"

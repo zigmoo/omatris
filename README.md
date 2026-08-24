@@ -8,7 +8,14 @@ external runtime dependencies.
 
 - **Classic** — clear 40 lines; speed increases every 10 lines.
 - **Endless** — keep playing until top-out and chase a high score.
-- **Practice** — relaxed speed; top-outs clear the board instead of ending the run.
+- **Practice** — adjustable gravity; top-outs clear the board instead of ending the run.
+- **Overlay (experimental)** — choose a suitable window on the current workspace
+  and play on a transparent board aligned to its bottom edge.
+
+Overlay mode temporarily takes keyboard focus while leaving the target window
+visible underneath. Press `Esc` to return to the picker. The first prototype is
+limited to visible windows on the current workspace and exits if the target is
+closed, hidden, or moved away.
 
 ## Test locally
 

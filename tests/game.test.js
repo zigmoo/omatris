@@ -15,7 +15,7 @@ function fillBottomExcept(state, columns) {
   }
 }
 
-for (const mode of ["classic", "endless", "practice"]) {
+for (const mode of ["classic", "endless", "practice", "overlay"]) {
   const state = game.newGame(mode)
   assert.equal(state.mode, mode)
   assert.equal(state.board.length, 20)

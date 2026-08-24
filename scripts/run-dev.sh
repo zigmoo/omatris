@@ -14,7 +14,7 @@ omarchy plugin validate "$project_dir"
 
 mkdir -p "$runtime_dir/Commons"
 cp -a /usr/share/omarchy/shell/Commons/. "$runtime_dir/Commons/"
-cp "$project_dir/Game.js" "$project_dir/Omatris.qml" "$runtime_dir/"
+cp "$project_dir/Game.js" "$project_dir/Omatris.qml" "$project_dir/OverlayWindow.qml" "$runtime_dir/"
 cp "$project_dir/dev/shell.qml" "$runtime_dir/shell.qml"
 
 quickshell -p "$runtime_dir"
