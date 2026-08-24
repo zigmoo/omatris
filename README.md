@@ -1,8 +1,8 @@
 # Omatris
 
-A clean, theme-aware falling-block game for the Omarchy Quattro shell. It runs in a
-native resizable window, follows the active Omarchy palette and needs no
-external runtime dependencies.
+A clean, theme-aware Tetris-inspired falling-block game for the Omarchy Quattro
+shell. It runs in a native resizable window, follows the active Omarchy palette
+and needs no external runtime dependencies.
 
 ![Omatris gameplay](preview.png)
 
