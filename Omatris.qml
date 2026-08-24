@@ -467,7 +467,7 @@ Item {
         softDropRepeat.repeat = false
         softDropRepeat.restart()
       }
-    } else if (event.key === Qt.Key_Up || event.key === Qt.Key_X || event.key === Qt.Key_K) {
+    } else if (event.key === Qt.Key_X) {
       if (!event.isAutoRepeat) pressRotation(1)
     } else if (event.key === Qt.Key_Z) {
       if (!event.isAutoRepeat) pressRotation(-1)
@@ -497,7 +497,7 @@ Item {
       downHeld = false
       softDropRepeat.stop()
       event.accepted = true
-    } else if (event.key === Qt.Key_Up || event.key === Qt.Key_X || event.key === Qt.Key_K) {
+    } else if (event.key === Qt.Key_X) {
       releaseRotation(1)
       event.accepted = true
     } else if (event.key === Qt.Key_Z) {
@@ -1026,7 +1026,7 @@ Item {
                   Text { text: "CONTROLS"; color: root.foreground; font.family: Style.fontFamily; font.pixelSize: 12; font.weight: Font.DemiBold }
                   Text { text: "← →  MOVE"; color: root.muted; font.family: Style.fontFamily; font.pixelSize: 11 }
                   Text { text: "↓     SOFT DROP"; color: root.muted; font.family: Style.fontFamily; font.pixelSize: 11 }
-                  Text { text: "↑ / Z ROTATE"; color: root.muted; font.family: Style.fontFamily; font.pixelSize: 11 }
+                  Text { text: "Z / X ROTATE"; color: root.muted; font.family: Style.fontFamily; font.pixelSize: 11 }
                   Text { text: "SPACE HARD DROP"; color: root.muted; font.family: Style.fontFamily; font.pixelSize: 11 }
                   Text { text: "C     HOLD"; color: root.muted; font.family: Style.fontFamily; font.pixelSize: 11 }
                   Text { text: "B     BLOCK STYLE"; color: root.muted; font.family: Style.fontFamily; font.pixelSize: 11 }

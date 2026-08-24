@@ -112,7 +112,7 @@ omarchy-shell shell summon com.80kv.omatris '{"mode":"practice"}'
 | Enter or Space | Select a menu action |
 | Arrow left/right, A/D, H/L | Move |
 | Arrow down, S, J | Soft drop |
-| Arrow up, X, K | Rotate clockwise |
+| X | Rotate clockwise |
 | Z | Rotate counter-clockwise |
 | Space | Hard drop |
 | C or Shift | Hold |
@@ -137,6 +137,7 @@ Ideas planned for future releases:
 - Colorblind-friendly and higher-contrast piece palettes.
 - Controls for overlay opacity, guides, and preview visibility.
 - A full Super Rotation System with more authentic wall kicks.
+- Optional background music with mute and volume controls.
 
 The first release stays intentionally focused: a polished core game, live
 Omarchy theming, keyboard-first menus, and the experimental window Overlay.
