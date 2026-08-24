@@ -78,6 +78,7 @@ PanelWindow {
 
     Item {
       id: board
+      readonly property bool subdued: game && (game.paused || game.status !== "playing")
       x: overlay.targetX + (overlay.targetWidth - width) / 2
       y: overlay.targetY + overlay.targetHeight - height
       width: overlay.boardWidth
@@ -158,6 +159,50 @@ PanelWindow {
             }
           }
         }
+      }
+
+      // Open-top rails reveal the collision walls without turning the
+      // transparent playfield into another boxed application window.
+      Rectangle {
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: 2
+        color: controller.accent
+        opacity: board.subdued ? 0.08 : 0.22
+        Behavior on opacity { NumberAnimation { duration: 140 } }
+      }
+
+      Rectangle {
+        anchors.left: parent.left
+        anchors.leftMargin: 2
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: 4
+        color: controller.accent
+        opacity: board.subdued ? 0.015 : 0.045
+        Behavior on opacity { NumberAnimation { duration: 140 } }
+      }
+
+      Rectangle {
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: 2
+        color: controller.accent
+        opacity: board.subdued ? 0.08 : 0.22
+        Behavior on opacity { NumberAnimation { duration: 140 } }
+      }
+
+      Rectangle {
+        anchors.right: parent.right
+        anchors.rightMargin: 2
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: 4
+        color: controller.accent
+        opacity: board.subdued ? 0.015 : 0.045
+        Behavior on opacity { NumberAnimation { duration: 140 } }
       }
     }
 
