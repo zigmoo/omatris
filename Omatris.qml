@@ -1017,6 +1017,7 @@ Item {
   FloatingWindow {
     id: window
     title: "Omatris"
+    visible: false
     color: root.background
     implicitWidth: 1040
     implicitHeight: 780
