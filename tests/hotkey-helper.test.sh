@@ -53,4 +53,14 @@ if invalid=$(run_helper set 'SHIFT + Q'); then
 fi
 [[ $(jq -r '.status' <<< "$invalid") == invalid ]]
 
+# A pre-planted backup symlink must be replaced, never followed.
+symlink_target="$test_dir/symlink-target"
+backup_file="$bindings_file.omatris-before-hotkey"
+printf '%s\n' 'must not be overwritten' > "$symlink_target"
+ln -sfn -- "$symlink_target" "$backup_file"
+run_helper set 'SUPER + G' >/dev/null
+[[ ! -L "$backup_file" ]]
+grep -q '^must not be overwritten$' "$symlink_target"
+grep -q '^-- user bindings$' "$backup_file"
+
 echo "Hotkey helper tests passed"

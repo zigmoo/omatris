@@ -76,6 +76,25 @@ without_managed_block() {
   ' "$bindings_file"
 }
 
+create_backup() {
+  local backup_temp status
+  backup_temp=$(mktemp "${backup_file}.XXXXXX")
+  if cp -p -- "$bindings_file" "$backup_temp"; then
+    :
+  else
+    status=$?
+    rm -f -- "$backup_temp"
+    return "$status"
+  fi
+  if mv -T -- "$backup_temp" "$backup_file"; then
+    :
+  else
+    status=$?
+    rm -f -- "$backup_temp"
+    return "$status"
+  fi
+}
+
 reload_and_validate() {
   if [[ "${OMATRIS_SKIP_RELOAD:-0}" == "1" ]]; then return 0; fi
   hyprctl reload >/dev/null
@@ -143,7 +162,7 @@ case "$operation" in
     fi
     mkdir -p -- "$(dirname -- "$bindings_file")"
     touch -- "$bindings_file"
-    cp -p -- "$bindings_file" "$backup_file"
+    create_backup
     write_binding "$combo"
     reload_and_validate || exit 4
     json_message "ok" "$combo" "Global shortcut saved"
@@ -154,7 +173,7 @@ case "$operation" in
       json_message "ok" "" "No Omatris shortcut was set"
       exit 0
     fi
-    cp -p -- "$bindings_file" "$backup_file"
+    create_backup
     write_binding ""
     reload_and_validate || exit 4
     json_message "ok" "" "Global shortcut removed"
@@ -163,7 +182,7 @@ case "$operation" in
     mkdir -p -- "$(dirname -- "$bindings_file")"
     touch -- "$bindings_file"
     existing=$(current_combo)
-    cp -p -- "$bindings_file" "$backup_file"
+    create_backup
     write_binding "$existing"
     reload_and_validate || exit 4
     if [[ "${OMATRIS_SKIP_CAPTURE:-0}" != "1" ]]; then
