@@ -1056,18 +1056,18 @@ Item {
 
             Column {
               id: menuView
-              property bool carousel: parent.height < 590
+              property bool compact: parent.height < 590
               visible: root.view === "menu"
               anchors.centerIn: parent
               width: Math.min(660, parent.width)
-              spacing: carousel ? 16 : 22
+              spacing: compact ? 7 : 22
 
               Text {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: "OMATRIS"
                 color: root.foreground
                 font.family: Style.fontFamily
-                font.pixelSize: 32
+                font.pixelSize: menuView.compact ? 25 : 32
                 font.weight: Font.DemiBold
                 font.letterSpacing: 2
               }
@@ -1077,12 +1077,12 @@ Item {
                 text: "Pick a mode. The blocks follow your current theme."
                 color: root.muted
                 font.family: Style.fontFamily
-                font.pixelSize: 14
+                font.pixelSize: menuView.compact ? 11 : 14
               }
 
               Column {
                 width: parent.width
-                spacing: 10
+                spacing: menuView.compact ? 5 : 10
 
                 Repeater {
                   model: [
@@ -1097,9 +1097,8 @@ Item {
                     required property int index
                     required property var modelData
                     property bool selected: index === root.menuIndex
-                    visible: !menuView.carousel || selected
                     width: parent.width
-                    height: 72
+                    height: menuView.compact ? 48 : 72
                     radius: Math.max(0, Style.cornerRadius * 0.65)
                     color: selected ? root.subtle : "transparent"
                     border.width: 1
@@ -1107,13 +1106,13 @@ Item {
 
                     Row {
                       anchors.fill: parent
-                      anchors.margins: 18
-                      spacing: 18
+                      anchors.margins: menuView.compact ? 11 : 18
+                      spacing: menuView.compact ? 11 : 18
 
                       Rectangle {
                         anchors.verticalCenter: parent.verticalCenter
-                        width: 9
-                        height: 36
+                        width: menuView.compact ? 7 : 9
+                        height: menuView.compact ? 26 : 36
                         radius: 2
                         color: modelData.mode === "classic" ? root.accent
                           : modelData.mode === "endless" ? root.urgent
@@ -1123,13 +1122,13 @@ Item {
 
                       Column {
                         anchors.verticalCenter: parent.verticalCenter
-                        spacing: 5
+                        spacing: menuView.compact ? 2 : 5
 
                         Text {
                           text: modelData.title
                           color: root.foreground
                           font.family: Style.fontFamily
-                          font.pixelSize: 17
+                          font.pixelSize: menuView.compact ? 14 : 17
                           font.weight: Font.DemiBold
                           font.letterSpacing: 1
                         }
@@ -1137,7 +1136,8 @@ Item {
                           text: modelData.detail
                           color: root.muted
                           font.family: Style.fontFamily
-                          font.pixelSize: 12
+                          font.pixelSize: menuView.compact ? 10 : 12
+                          elide: Text.ElideRight
                         }
                       }
                     }
@@ -1159,23 +1159,49 @@ Item {
 
               Text {
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: menuView.carousel
-                  ? "↑ ↓ cycle modes  ·  Enter select  ·  O overlay"
-                  : "↑ ↓ choose  ·  Enter select  ·  O overlay"
+                text: "↑ ↓ choose  ·  Enter select  ·  O overlay"
                 color: root.muted
                 font.family: Style.fontFamily
-                font.pixelSize: 12
+                font.pixelSize: menuView.compact ? 10 : 12
               }
             }
 
+            Flickable {
+              id: settingsViewport
+              property bool compact: height < 590 || width < 700
+              property real responsiveScale: compact
+                ? Math.min(1, width / settingsView.width)
+                : root.scaleToFit(width, height, settingsView.width, settingsView.height)
+              visible: root.view === "settings"
+              anchors.fill: parent
+              contentWidth: width
+              contentHeight: Math.max(height, settingsView.height * responsiveScale)
+              clip: true
+              boundsBehavior: Flickable.StopAtBounds
+              interactive: compact && contentHeight > height
+
+              function ensureVisible(item) {
+                if (!compact || !item) return
+                var point = item.mapToItem(contentItem, 0, 0)
+                var top = point.y
+                var bottom = top + item.height * responsiveScale
+                var padding = 12
+                if (top < contentY + padding)
+                  contentY = Math.max(0, top - padding)
+                else if (bottom > contentY + height - padding)
+                  contentY = Math.min(contentHeight - height, bottom - height + padding)
+              }
+
             Column {
               id: settingsView
-              property real responsiveScale: root.scaleToFit(parent.width, parent.height, 760, implicitHeight)
-              visible: root.view === "settings"
-              anchors.centerIn: parent
-              width: 760
-              scale: responsiveScale
-              spacing: 13
+              property bool compact: settingsViewport.compact
+              x: (settingsViewport.width - width * settingsViewport.responsiveScale) / 2
+              y: settingsViewport.contentHeight > settingsViewport.height ? 0
+                : (settingsViewport.height - height * settingsViewport.responsiveScale) / 2
+              width: compact ? 600 : 760
+              scale: settingsViewport.responsiveScale
+              transformOrigin: Item.Top
+              spacing: compact ? 9 : 13
 
               Text {
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -1185,6 +1211,17 @@ Item {
                 font.pixelSize: 27
                 font.weight: Font.DemiBold
                 font.letterSpacing: 2
+              }
+
+              Text {
+                visible: settingsView.compact
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: "SCROLL TO VIEW ALL SETTINGS"
+                color: root.muted
+                font.family: Style.fontFamily
+                font.pixelSize: 9
+                font.weight: Font.DemiBold
+                font.letterSpacing: 1
               }
 
               Text {
@@ -1202,21 +1239,27 @@ Item {
                 spacing: 14
 
                 VolumeSetting {
+                  id: musicVolumeSetting
+                  width: settingsView.compact ? 293 : 373
                   label: "MUSIC"
                   value: audioSettings.musicVolume
                   selected: root.settingsFocus === 0
                   editing: root.editingVolume === "music"
                   onHovered: root.settingsFocus = 0
                   onVolumeSelected: function(value) { root.setVolume("music", value) }
+                  onSelectedChanged: if (selected) Qt.callLater(function() { settingsViewport.ensureVisible(musicVolumeSetting) })
                 }
 
                 VolumeSetting {
+                  id: effectsVolumeSetting
+                  width: settingsView.compact ? 293 : 373
                   label: "EFFECTS"
                   value: audioSettings.effectsVolume
                   selected: root.settingsFocus === 1
                   editing: root.editingVolume === "effects"
                   onHovered: root.settingsFocus = 1
                   onVolumeSelected: function(value) { root.setVolume("effects", value) }
+                  onSelectedChanged: if (selected) Qt.callLater(function() { settingsViewport.ensureVisible(effectsVolumeSetting) })
                 }
               }
 
@@ -1245,7 +1288,7 @@ Item {
 
               Grid {
                 anchors.horizontalCenter: parent.horizontalCenter
-                columns: 2
+                columns: settingsView.compact ? 1 : 2
                 columnSpacing: 10
                 rowSpacing: 7
 
@@ -1253,15 +1296,18 @@ Item {
                   model: root.controlDefinitions()
 
                   delegate: Rectangle {
+                    id: controlCard
                     required property int index
                     required property var modelData
                     property bool selected: root.controlSlotFocused(index, 0) || root.controlSlotFocused(index, 1)
-                    width: 375
-                    height: 42
+                    width: settingsView.compact ? 600 : 375
+                    height: settingsView.compact ? 39 : 42
                     radius: Math.max(0, Style.cornerRadius * 0.4)
                     color: selected ? root.subtle : "transparent"
                     border.width: 1
                     border.color: selected ? root.outline : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.07)
+
+                    onSelectedChanged: if (selected) Qt.callLater(function() { settingsViewport.ensureVisible(controlCard) })
 
                     Text {
                       anchors.left: parent.left
@@ -1344,6 +1390,8 @@ Item {
                 border.width: root.capturingGlobalHotkey ? 2 : 1
                 border.color: root.hotkeyError ? root.urgent : selected ? root.accent : root.outline
 
+                onSelectedChanged: if (selected) Qt.callLater(function() { settingsViewport.ensureVisible(globalHotkeyBox) })
+
                 Text {
                   anchors.left: parent.left
                   anchors.leftMargin: 13
@@ -1385,6 +1433,9 @@ Item {
               Text {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: root.settingsNotice || "Select a key slot, then press the replacement key"
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.Wrap
                 color: root.hotkeyError ? root.urgent
                   : root.rebindingAction || root.capturingGlobalHotkey || root.hotkeyBusy ? root.accent : root.muted
                 font.family: Style.fontFamily
@@ -1396,32 +1447,42 @@ Item {
                 spacing: 10
 
                 ActionButton {
+                  id: resetControlsButton
                   label: "RESET CONTROLS"
                   selected: root.settingsFocus === SettingsNavigation.actionFocus(root.controlDefinitions().length, 0)
                   onHovered: root.settingsFocus = SettingsNavigation.actionFocus(root.controlDefinitions().length, 0)
                   onClicked: root.resetControlBindings()
+                  onSelectedChanged: if (selected) Qt.callLater(function() { settingsViewport.ensureVisible(resetControlsButton) })
                 }
                 ActionButton {
+                  id: muteAudioButton
                   label: audioSettings.muted ? "UNMUTE" : "MUTE AUDIO"
                   selected: root.settingsFocus === SettingsNavigation.actionFocus(root.controlDefinitions().length, 1)
                   onHovered: root.settingsFocus = SettingsNavigation.actionFocus(root.controlDefinitions().length, 1)
                   onClicked: audioSettings.muted = !audioSettings.muted
+                  onSelectedChanged: if (selected) Qt.callLater(function() { settingsViewport.ensureVisible(muteAudioButton) })
                 }
                 ActionButton {
+                  id: settingsBackButton
                   label: "BACK"
                   selected: root.settingsFocus === SettingsNavigation.actionFocus(root.controlDefinitions().length, 2)
                   onHovered: root.settingsFocus = SettingsNavigation.actionFocus(root.controlDefinitions().length, 2)
                   onClicked: root.returnToMenu()
+                  onSelectedChanged: if (selected) Qt.callLater(function() { settingsViewport.ensureVisible(settingsBackButton) })
                 }
               }
 
               Text {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: "ARROWS move  ·  TAB / SHIFT+TAB cycle  ·  ENTER edit/select  ·  ESC back"
+                width: parent.width
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.Wrap
                 color: root.muted
                 font.family: Style.fontFamily
                 font.pixelSize: 10
               }
+            }
             }
 
             Column {
