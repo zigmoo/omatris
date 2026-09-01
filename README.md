@@ -95,7 +95,7 @@ omarchy plugin remove com.80kv.omatris
 
 ## Local development
 
-Run the automated manifest and game-engine checks:
+Run the automated manifest, game-engine, and security checks:
 
 ```bash
 ./scripts/check.sh

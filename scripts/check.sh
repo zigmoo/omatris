@@ -7,6 +7,7 @@ project_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 omarchy plugin validate "$project_dir"
 node "$project_dir/tests/game.test.js"
 node "$project_dir/tests/settings-navigation.test.js"
+node "$project_dir/tests/security.test.js"
 bash "$project_dir/tests/hotkey-helper.test.sh"
 
 for runtime_file in AudioController.qml BoardEffects.qml SettingsNavigation.js scripts/omatris-hotkey assets/audio/music.ogg \

@@ -1550,6 +1550,7 @@ Item {
                         Text {
                           width: parent.width
                           text: modelData.title
+                          textFormat: Text.PlainText
                           elide: Text.ElideRight
                           color: root.foreground
                           font.family: Style.fontFamily
@@ -1559,6 +1560,7 @@ Item {
                         Text {
                           width: parent.width
                           text: modelData.appClass
+                          textFormat: Text.PlainText
                           elide: Text.ElideRight
                           color: root.muted
                           font.family: Style.fontFamily
