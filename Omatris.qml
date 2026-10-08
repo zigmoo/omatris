@@ -5,6 +5,7 @@ import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import "Game.js" as Game
 import "SettingsNavigation.js" as SettingsNavigation
 
@@ -141,12 +142,12 @@ Item {
   readonly property var overlayScreen: screenForMonitor(overlayTarget ? overlayTarget.monitor : null)
   property bool overlayTestingNoFocus: false
 
-  readonly property color background: Color.background
-  readonly property color foreground: Color.foreground
-  readonly property color accent: Color.accent
-  readonly property color urgent: Color.urgent
-  readonly property color muted: Color.muted
-  readonly property color surface: Color.popups.background
+  readonly property color background: Commons.Color.background
+  readonly property color foreground: Commons.Color.foreground
+  readonly property color accent: Commons.Color.accent
+  readonly property color urgent: Commons.Color.urgent
+  readonly property color muted: Commons.Color.muted
+  readonly property color surface: Commons.Color.popups.background
   readonly property color subtle: Qt.rgba(foreground.r, foreground.g, foreground.b, 0.08)
   readonly property color outline: Qt.rgba(accent.r, accent.g, accent.b, 0.38)
   readonly property color blockInterior: "#08090b"
